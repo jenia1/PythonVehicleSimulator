@@ -2,9 +2,10 @@
 """
 Simulator plotting functions:
 
-plotVehicleStates(simTime, simData, figNo) 
+plotVehicleStates(simTime, simData, figNo)
 plotControls(simTime, simData, vehicle, figNo)
 def plot3D(simData, numDataPoints, FPS, filename, figNo)
+def plot2D(simData, numDataPoints, FPS, filename, figNo)
 
 Author:     Thor I. Fossen
 """
@@ -224,5 +225,63 @@ def plot3D(simData,numDataPoints,FPS,filename,figNo):
                          repeat=True)
     
     # Save the 3D animation as a gif file
-    ani.save(filename, writer=animation.PillowWriter(fps=FPS))  
+    ani.save(filename, writer=animation.PillowWriter(fps=FPS))
+
+
+# plot2D(simData,numDataPoints,FPS,filename,figNo) plots the vehicle's vertical-plane
+# trajectory (distance travelled x vs. depth z) in figure no. figNo. Intended for
+# vehicles that only move in the x-z plane, e.g. the DSRV.
+def plot2D(simData,numDataPoints,FPS,filename,figNo):
+
+    # State vectors
+    x = simData[:,0]
+    z = simData[:,2]
+
+    # down-sampling the x,z data points
+    X = x[::len(x) // numDataPoints]
+    D = z[::len(x) // numDataPoints]
+
+    # Animation function
+    def anim_function(num, dataSet, line):
+
+        line.set_data(dataSet[0, :num], dataSet[1, :num])
+
+        return line
+
+    dataSet = np.array([X, -D])      # Down is negative z
+
+    # Attaching axis to the figure
+    fig = plt.figure(figNo,figsize=(cm2inch(figSize1[0]),cm2inch(figSize1[1])),
+               dpi=dpiValue)
+    ax = plt.gca()
+
+    # Line/trajectory plot
+    line = plt.plot(dataSet[0], dataSet[1], lw=2, c='b')[0]
+
+    # Setting the axes properties
+    ax.set_xlabel('X / Distance travelled (m)')
+    ax.set_ylabel('-Z / Depth (m)')
+    ax.set_ylim([-100, 20])                     # default depth = -100 m
+
+    if np.amax(z) > 100.0:
+        ax.set_ylim([-np.amax(z), 20])
+
+    # Surface line for z = 0
+    ax.axhline(0, color='gray', linestyle='--', alpha=0.5)
+
+    # Title of plot
+    ax.set_title('Vertical-plane trajectory')
+    ax.grid()
+
+    # Create the animation object
+    ani = animation.FuncAnimation(fig,
+                         anim_function,
+                         frames=numDataPoints,
+                         fargs=(dataSet,line),
+                         interval=200,
+                         blit=False,
+                         repeat=True)
+
+    # Save the 2D animation as a gif file
+    ani.save(filename, writer=animation.PillowWriter(fps=FPS))
 

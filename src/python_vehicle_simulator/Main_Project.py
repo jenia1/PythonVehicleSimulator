@@ -10,7 +10,7 @@ URL: https://www.fossen.biz/wiley
 import matplotlib.pyplot as plt
 from python_vehicle_simulator.vehicles import DSRV
 from python_vehicle_simulator.lib import (
-    printVehicleinfo, simulate, plotVehicleStates, plotControls, plot3D
+    printVehicleinfo, simulate, plotVehicleStates, plotControls, plot2D
 )
 from python_vehicle_simulator.Logger import addToLog, writeLog, clearLog
 
@@ -18,10 +18,10 @@ from python_vehicle_simulator.Logger import addToLog, writeLog, clearLog
 sampleTime = 0.02                   # sample time [seconds]
 N = 10000                           # number of samples
 
-# 3D plot and animation settings
-numDataPoints = 50                  # number of 3D data points
+# 2D plot and animation settings (DSRV only moves in the x-z plane)
+numDataPoints = 50                  # number of 2D data points
 FPS = 10                            # frames per second (animated GIF)
-filename = '3D_animation.gif'       # data file for animated GIF
+filename = '2D_animation.gif'       # data file for animated GIF
 csvFilename = 'simdata.csv'         # data file for logged simulation data
 
 
@@ -63,10 +63,10 @@ def main():
     # Log simulation data to CSV
     logDataToCSV(simTime, simData, vehicle, csvFilename)
 
-    # 3D plots and animation
+    # 2D plots and animation
     plotVehicleStates(simTime, simData, 1)
     plotControls(simTime, simData, vehicle, 2)
-    plot3D(simData, numDataPoints, FPS, filename, 3)
+    plot2D(simData, numDataPoints, FPS, filename, 3)
 
     plt.show()
     plt.close()
