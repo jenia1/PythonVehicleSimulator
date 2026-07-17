@@ -42,14 +42,15 @@ from python_vehicle_simulator.lib.control import PIDpolePlacement
 # Class Vehicle
 class DSRV:
     """
-    DSRV()                      Step input, rudder angle
-    DSRV('deptAutopilot',z_d)   Depth autopilot
-    
+    DSRV()                          Step input, rudder angle
+    DSRV('deptAutopilot',z_d,z0)    Depth autopilot
+
     Inputs:
         z_d: desired depth, positive downwards (m)
+        z0: initial depth, positive downwards (m), default = 0
     """
 
-    def __init__(self, controlSystem="stepInput", r=0):
+    def __init__(self, controlSystem="stepInput", r=0, z0=0):
 
         if controlSystem == "depthAutopilot":
             self.controlDescription = "Depth autopilot, z_d = " + str(r) + " m"
@@ -104,7 +105,7 @@ class DSRV:
 
         # Reference model
         self.w_max = 1  # maximum heave velocity
-        self.z_d = 0  # position, velocity and acc. states
+        self.z_d = z0  # position, velocity and acc. states, synced to initial depth
         self.w_d = 0
         self.a_d = 0
         self.wn_d = self.wn / 5
