@@ -16,8 +16,9 @@ DSRV.py:
         
 Methods:   
         
-    [nu, u_actual] = dynamics(eta,nu,u_actual,u_control,sampleTime) returns
-         nu[k+1] and u_actual[k+1] using Euler's method. The control input is:
+    [nu, u_actual, nu_dot] = dynamics(eta,nu,u_actual,u_control,sampleTime)
+         returns nu[k+1], u_actual[k+1] and nu_dot[k] (body-frame accelerations,
+         used e.g. by an IMU model) using Euler's method. The control input is:
        
          u_control = delta_s (rad):  DSRV stern plane.
 
@@ -114,7 +115,7 @@ class DSRV:
 
     def dynamics(self, eta, nu, u_actual, u_control, sampleTime):
         """
-        [nu, u_actual] = dynamics(eta,nu,u_actual,u_control,sampleTime)
+        [nu, u_actual, nu_dot] = dynamics(eta,nu,u_actual,u_control,sampleTime)
         integrates the DSRV equations of motion using Euler's method.
         """
 
@@ -156,7 +157,7 @@ class DSRV:
 
         u_actual = np.array([delta], float)
 
-        return nu, u_actual
+        return nu, u_actual, nu_dot
 
 
     def stepInput(self, t):

@@ -20,7 +20,9 @@ N = 10000                           # number of samples
 
 # Initial state [x, y, z, phi, theta, psi], z positive downwards (m)
 eta0 = [0, 0, 50.0, 0, 0, 0]
-z_d = 60.0                          # desired depth (m)
+z_d = 0.0                       # desired depth (m)
+
+imu_mode = "ideal"              # "ideal" or "simple" (bias/scale/misalignment/noise)
 
 # 2D plot and animation settings (DSRV only moves in the x-z plane)
 numDataPoints = 50                  # number of 2D data points
@@ -62,7 +64,7 @@ def main():
     printVehicleinfo(vehicle, sampleTime, N)
 
     # Main simulation loop
-    [simTime, simData] = simulate(N, sampleTime, vehicle, eta0)
+    [simTime, simData, imuData, navData] = simulate(N, sampleTime, vehicle, eta0, imu_mode)
 
     # Log simulation data to CSV
     logDataToCSV(simTime, simData, vehicle, csvFilename)
