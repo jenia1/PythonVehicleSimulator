@@ -58,35 +58,86 @@ def printVehicleinfo(vehicle, sampleTime, N):
     
 
 ###############################################################################
+# Body stepping: attaches nav/IMU state onto a vehicle-like object and steps it
+###############################################################################
+def initBody(body, eta0, imu_mode="ideal"):
+    """
+    Attaches position/attitude and navigation state onto a vehicle-like
+    object, alongside the .nu/.u_actual it already carries, so simulate()
+    can step any such body (a vehicle today, e.g. a dock later) through the
+    same code path.
+
+    body must provide: .dynamics(eta, nu, u_actual, u_control, sampleTime),
+    .nu, .u_actual, and optionally .U0 (see StrapdownINS docstring).
+    """
+    body.eta = np.array(eta0, float)              # position/attitude
+
+    # imu_mode: "ideal" (no errors) or "simple" (bias/scale/misalignment/
+    # noise error model, currently set to ideal values in IMU.py until real
+    # sensor specs are added)
+    body.imu = IMU(mode=imu_mode)
+
+    # Navigation: dead-reckons eta_est, nu_est from IMU measurements only.
+    # Initialized with the true initial state (a nav system must start
+    # somewhere); estimate is what the controller sees from here on.
+    # u_const: some models (e.g. DSRV) hardcode a constant cruise speed
+    # without a matching Coriolis term in nu_dot[0], so pin the estimate to
+    # it too instead of integrating a fictitious accelerometer reading (see
+    # StrapdownINS docstring)
+    u_const = getattr(body, "U0", None)
+    body.nav = StrapdownINS(body.eta, body.nu, u_const=u_const)
+    body.eta_est, body.nu_est = body.nav.eta_est, body.nav.nu_est
+
+
+def stepBody(body, u_control, sampleTime):
+    """
+    Propagates dynamics for one sample, measures the IMU at the pre-update
+    eta (nu_dot is only valid there - see mainLoop history), updates the
+    navigation estimate, then advances eta. Returns the IMU measurement dict
+    for logging.
+    """
+    nu, u_actual, nu_dot = body.dynamics(
+        body.eta, body.nu, body.u_actual, u_control, sampleTime
+    )
+
+    imu_meas = body.imu.measure(body.eta, nu, nu_dot)
+    body.eta_est, body.nu_est = body.nav.update(imu_meas, sampleTime)
+
+    body.eta = attitudeEuler(body.eta, nu, sampleTime)
+    body.nu, body.u_actual = nu, u_actual
+
+    return imu_meas
+
+
+def _computeControl(vehicle, eta_est, nu_est, t, sampleTime):
+    """
+    Vehicle specific control systems - uses the navigation estimate, not the
+    true eta/nu, since a real controller only has access to what the
+    sensors/navigation filter provide.
+    """
+    if vehicle.controlMode == 'depthAutopilot':
+        return vehicle.depthAutopilot(eta_est, nu_est, sampleTime)
+    elif vehicle.controlMode == 'headingAutopilot':
+        return vehicle.headingAutopilot(eta_est, nu_est, sampleTime)
+    elif vehicle.controlMode == 'depthHeadingAutopilot':
+        return vehicle.depthHeadingAutopilot(eta_est, nu_est, sampleTime)
+    elif vehicle.controlMode == 'DPcontrol':
+        return vehicle.DPcontrol(eta_est, nu_est, sampleTime)
+    elif vehicle.controlMode == 'stepInput':
+        return vehicle.stepInput(t)
+
+
+###############################################################################
 # Function simulate(N, sampleTime, vehicle)
 ###############################################################################
 def simulate(N, sampleTime, vehicle, eta0=None, imu_mode="ideal"):
 
     DOF = 6                     # degrees of freedom
-    t = 0                       # initial simulation time
 
-    # Initial state vectors
     if eta0 is None:
         eta0 = [0, 0, 0, 0, 0, 0]
-    eta = np.array(eta0, float)                  # position/attitude
-    nu = vehicle.nu                              # velocity, defined by vehicle class
-    u_actual = vehicle.u_actual                  # actual inputs, defined by vehicle class
 
-    # imu_mode: "ideal" (no errors) or "simple" (bias/scale/misalignment/noise
-    # error model, currently set to ideal values in IMU.py until real sensor
-    # specs are added)
-    imu = IMU(mode=imu_mode)
-
-    # Navigation: dead-reckons eta_est, nu_est from IMU measurements only.
-    # Initialized with the true initial state (a nav system must start
-    # somewhere); estimate is what the controller sees from here on.
-    # u_const: some vehicle models (e.g. DSRV) hardcode a constant cruise
-    # speed without a matching Coriolis term in nu_dot[0], so pin the
-    # estimate to it too instead of integrating a fictitious accelerometer
-    # reading (see StrapdownINS docstring)
-    u_const = getattr(vehicle, "U0", None)
-    nav = StrapdownINS(eta, nu, u_const=u_const)
-    eta_est, nu_est = nav.eta_est, nav.nu_est
+    initBody(vehicle, eta0, imu_mode=imu_mode)
 
     # Initialization of table used to store the simulation data
     simData = np.empty( [0, 2*DOF + 2 * vehicle.dimU], float)
@@ -94,45 +145,20 @@ def simulate(N, sampleTime, vehicle, eta0=None, imu_mode="ideal"):
     navData = np.empty( [0, 2*DOF], float)        # [eta_est (6), nu_est (6)]
 
     # Simulator for-loop
+    t = 0
     for i in range(0,N+1):
 
         t = i * sampleTime      # simulation time
 
-        # Vehicle specific control systems - use the navigation estimate,
-        # not the true eta/nu, since a real controller only has access to
-        # what the sensors/navigation filter provide
-        if (vehicle.controlMode == 'depthAutopilot'):
-            u_control = vehicle.depthAutopilot(eta_est,nu_est,sampleTime)
-        elif (vehicle.controlMode == 'headingAutopilot'):
-            u_control = vehicle.headingAutopilot(eta_est,nu_est,sampleTime)
-        elif (vehicle.controlMode == 'depthHeadingAutopilot'):
-            u_control = vehicle.depthHeadingAutopilot(eta_est,nu_est,sampleTime)
-        elif (vehicle.controlMode == 'DPcontrol'):
-            u_control = vehicle.DPcontrol(eta_est,nu_est,sampleTime)
-        elif (vehicle.controlMode == 'stepInput'):
-            u_control = vehicle.stepInput(t)
+        u_control = _computeControl(vehicle, vehicle.eta_est, vehicle.nu_est, t, sampleTime)
 
         # Store simulation data in simData (true state) and navData (estimate)
-        signals = np.append( np.append( np.append(eta,nu),u_control), u_actual )
+        signals = np.append( np.append( np.append(vehicle.eta,vehicle.nu),u_control), vehicle.u_actual )
         simData = np.vstack( [simData, signals] )
-        navData = np.vstack( [navData, np.append(eta_est, nu_est)] )
+        navData = np.vstack( [navData, np.append(vehicle.eta_est, vehicle.nu_est)] )
 
-        # Propagate vehicle dynamics (ground truth). nu_dot can only be
-        # computed here (it depends on u_control), and it's valid at the
-        # pre-update eta - so the IMU call below must come before
-        # attitudeEuler() advances eta, not before this.
-        [nu, u_actual, nu_dot]  = vehicle.dynamics(eta,nu,u_actual,u_control,sampleTime)
-
-        # IMU measurement (mode selected by the imu_mode flag: "ideal" or "simple")
-        imu_meas = imu.measure(eta, nu, nu_dot)
+        imu_meas = stepBody(vehicle, u_control, sampleTime)
         imuData = np.vstack([imuData, np.append(imu_meas["f_b"], imu_meas["omega_b"])])
-
-        # Navigation update: IMU measurement in, eta_est/nu_est out, used by
-        # the controller on the next iteration
-        eta_est, nu_est = nav.update(imu_meas, sampleTime)
-
-        # Propagate attitude dynamics (ground truth)
-        eta = attitudeEuler(eta,nu,sampleTime)
 
     # Store simulation time vector
     simTime = np.arange(start=0, stop=t+sampleTime, step=sampleTime)[:, None]
