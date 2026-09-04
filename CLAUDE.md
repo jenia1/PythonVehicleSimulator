@@ -44,6 +44,7 @@ floating-point arithmetic.
 | `src/python_vehicle_simulator/main.py` | Upstream Fossen entry point, interactive vehicle menu (untouched) |
 | `src/python_vehicle_simulator/lib/mainLoop.py` | `simulate()` and the body-stepping helpers |
 | `src/python_vehicle_simulator/lib/simLog.py` | `SimLog`, the named-column multi-body log |
+| `src/python_vehicle_simulator/structures/` | `Buoy`, `Dock` — the docking structure; `Cable` still to come |
 | `src/python_vehicle_simulator/sensors/IMU.py` | IMU model, `"ideal"` or `"simple"` error model |
 | `src/python_vehicle_simulator/navigation/StrapdownINS.py` | IMU-only dead reckoning, no aiding yet |
 | `src/python_vehicle_simulator/vehicles/` | 10 standalone Fossen vehicle models, no shared base class |
@@ -107,11 +108,19 @@ logged but not consumed by anything.
 
 ## Current state
 
-Call sites for `buoy`, `cable` and `dock` are wired into `simulate()` as
-optional arguments defaulting to `None`. With all `None` — which is every
-current caller — the blocks are skipped and the vehicle path is untouched.
+`Buoy` and `Dock` exist as **static** bodies: fixed position, `dynamics()`
+returns zero `nu` and `nu_dot`, each with its own IMU and `StrapdownINS`,
+stepped and logged alongside the vehicle. `Main_Project` places the buoy at
+the surface half-way along the vehicle's track and the dock 2 m below it,
+draws both on the 2D trajectory plot, and writes their `eta` to the CSV.
 
-These are the calls the models must satisfy:
+Verified over a full run: both hold position exactly, both nav estimates show
+zero drift with the ideal IMU, and both accelerometers read
+`f_b = [0, 0, -9.81]` — the correct static-body signature with z positive
+down.
+
+`Cable` does not exist yet, so `cable` is still `None` and nothing couples
+the buoy to the dock. These are the calls the models must satisfy:
 
 ```python
 initBody(buoy, buoy_eta0, imu_mode)     # needs .nu, .u_actual
@@ -130,21 +139,31 @@ internally, so the signature still holds when the buoy becomes dynamic.
 
 ## Migrating to SimLog
 
-`simulate()` still returns the 4-tuple `(simTime, simData, imuData, navData)`,
-with `simData`'s width hardcoded to the vehicle's shape. `SimLog` replaces
-that before any dock data lands. Four steps, `compare_simdata.py` after each:
-
 1. ~~Add `simLog.py`, no callers.~~ **done**
-2. `simulate()` fills a `SimLog` internally, still returns the 4-tuple built
-   from it — must stay bit-identical. This is what proves `SimLog` reproduces
-   the current data exactly, before any caller depends on it.
-3. `simulate()` returns the log; `Main_Project` uses `log.simData()` and
-   `log.time` — must stay bit-identical.
-4. Log the buoy/cable/dock signals. **The check fails here by design** (new
-   CSV columns), which triggers the review-and-regenerate step above.
+2. ~~`simulate()` fills a `SimLog` internally, still returns the 4-tuple.~~
+   **done** — verified bitwise identical on all four arrays.
+3. ~~`simulate()` returns the log; callers read it by name.~~ **done** —
+   `simdata.csv` came out byte-identical to the reference.
+4. ~~Log the buoy/cable/dock signals.~~ **done** — the check now fails by
+   design on the 12 new `buoy_*` / `dock_*` columns. Every one of the 15
+   reference columns still matches byte-for-byte, so the reference is waiting
+   to be regenerated (`cp simdata.csv simdata_ref.csv`).
 
-Steps 2 and 3 are provably behaviour-preserving; only step 4 moves the
-reference, and only under review.
+`simulate()` now returns a `SimLog`. Callers take what they need from it:
+
+```python
+log = simulate(N, sampleTime, vehicle, eta0, imu_mode)
+simTime = log.time
+simData = log.simData("vehicle")     # eta | nu | u_control | u_actual
+```
+
+`logDataToCSV()` in `Main_Project.py` lists its columns explicitly rather
+than writing the whole log, so adding a signal (a new body, an IMU or nav
+channel) cannot silently change `simdata.csv`. Extend that list deliberately,
+and regenerate the reference when you do.
+
+`Logger.py` is now unused — `SimLog.writeCSV()` replaced it. Left in place
+for now; delete it when you are happy with the new logger.
 
 Then: the `Cable` and `Dock` models themselves.
 
@@ -157,8 +176,15 @@ files carry `Author: Jenia`; upstream files keep `Author: Thor I. Fossen`.
 
 ## Known issues
 
-- `tests/test_simulate.py` unpacks `simTime, simData = simulation`, but
-  `simulate()` has returned a 4-tuple since the IMU/nav work — those tests
-  fail to unpack. Pre-existing, unrelated to the buoy/cable/dock work.
-- `pytest` is not installed in `.venv`, so the suite is not runnable as-is.
+- **`simulate()` only works with the DSRV.** `stepBody()` unpacks three
+  values from `dynamics()`, but only `DSRV.py` returns `nu_dot` — the other
+  nine vehicles still return the upstream `nu, u_actual`, so they fail with
+  `ValueError: not enough values to unpack (expected 3, got 2)`.
+  Pre-existing since commit `f0e6977` (the IMU/nav work), unrelated to the
+  buoy/cable/dock work, and harmless while the thesis uses only the DSRV.
+  Fixing it means deriving and returning body-frame accelerations in nine
+  vehicle models — real work, not a mechanical edit.
+- `tests/test_simulate.py` exercises the tanker, otter and others, so it
+  cannot pass until the above is fixed. Its calls were updated to the SimLog
+  API but have not been run — `pytest` is not installed in `.venv`.
   `compare_simdata.py` is the working regression check in the meantime.

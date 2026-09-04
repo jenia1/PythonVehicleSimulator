@@ -31,17 +31,17 @@ def test_simulate(simulation):
     pass
     
 def test_plot_vehicle_states(simulation):
-    simTime, simData = simulation
+    simTime, simData = simulation.time, simulation.simData("vehicle")
     plotVehicleStates(simTime, simData, 1)
     #plt.show()
 
 def test_plot_controls(simulation, vehicle):
-    simTime, simData = simulation
+    simTime, simData = simulation.time, simulation.simData("vehicle")
     plotControls(simTime, simData, vehicle, 2)
     #plt.show()
 
 def test_3D_plot(simulation, vehicle):
-    simTime, simData = simulation
+    simTime, simData = simulation.time, simulation.simData("vehicle")
     plot3D(simData,numDataPoints,FPS,filename,3)
     #plt.show()
     

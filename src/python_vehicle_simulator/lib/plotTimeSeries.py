@@ -231,7 +231,10 @@ def plot3D(simData,numDataPoints,FPS,filename,figNo):
 # plot2D(simData,numDataPoints,FPS,filename,figNo) plots the vehicle's vertical-plane
 # trajectory (distance travelled x vs. depth z) in figure no. figNo. Intended for
 # vehicles that only move in the x-z plane, e.g. the DSRV.
-def plot2D(simData,numDataPoints,FPS,filename,figNo):
+def plot2D(simData,numDataPoints,FPS,filename,figNo,markers=None):
+
+    # markers: optional fixed points to draw in the x-z plane, given as
+    # { label: (x, z) } with z positive downwards, e.g. the buoy and the dock
 
     # State vectors
     x = simData[:,0]
@@ -268,6 +271,20 @@ def plot2D(simData,numDataPoints,FPS,filename,figNo):
 
     # Surface line for z = 0
     ax.axhline(0, color='gray', linestyle='--', alpha=0.5)
+
+    # Docking structure, drawn as fixed points in the x-z plane. The buoy and
+    # the dock sit only metres apart on an axis spanning tens of metres, so
+    # they are told apart by a legend rather than by labels next to the
+    # points, which would overlap.
+    if markers is not None:
+        markerStyles = [('o', 'r'), ('s', 'g'), ('^', 'm'), ('D', 'c')]
+
+        for k, (label, (x_m, z_m)) in enumerate(markers.items()):
+            style, color = markerStyles[k % len(markerStyles)]
+            ax.plot(x_m, -z_m, marker=style, markersize=7, color=color,
+                    linestyle='None', label=label)
+
+        ax.legend(fontsize=legendSize, loc='lower right')
 
     # Title of plot
     ax.set_title('Vertical-plane trajectory')

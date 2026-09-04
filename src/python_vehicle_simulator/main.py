@@ -76,9 +76,11 @@ def main():
         print('Error: Not a valid simulator option')
         sys.exit()
 
-    # Main simulation loop 
-    [simTime, simData] = simulate(N, sampleTime, vehicle)
-    
+    # Main simulation loop
+    log = simulate(N, sampleTime, vehicle)
+    simTime = log.time
+    simData = log.simData("vehicle")
+
     # 3D plots and animation
     plotVehicleStates(simTime, simData, 1)                    
     plotControls(simTime, simData, vehicle, 2)

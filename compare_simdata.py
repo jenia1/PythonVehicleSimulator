@@ -30,8 +30,6 @@ matplotlib.use("Agg")          # no display needed, this script never plots
 import numpy as np
 
 from python_vehicle_simulator import Main_Project as MP
-from python_vehicle_simulator.vehicles import DSRV
-from python_vehicle_simulator.lib import simulate
 
 REF_FILE = "simdata_ref.csv"
 OUT_FILE = "simdata.csv"
@@ -39,60 +37,88 @@ OUT_FILE = "simdata.csv"
 
 def readSimData(filename):
     """
-    names, data = readSimData(filename) reads a Logger CSV file and returns
-    the column names and the numeric data as an array.
+    names, data = readSimData(filename) reads a simulation CSV file and
+    returns the column names and the numeric data as an array.
     """
     names = np.genfromtxt(filename, delimiter=",", max_rows=1, dtype=str)
     data = np.genfromtxt(filename, delimiter=",", skip_header=1)
-    return list(names), data
+    return [str(name) for name in names], data
 
 
 def runSimulation(filename):
     """
     runSimulation(filename) runs the Main_Project simulation and writes the
-    logged data to filename, using the parameters defined in Main_Project.py
+    logged data to filename. The simulation is built by Main_Project itself,
     so this check always follows the real configuration.
     """
-    vehicle = DSRV("depthAutopilot", MP.z_d, MP.eta0[2])
-    simTime, simData, imuData, navData = simulate(
-        MP.N, MP.sampleTime, vehicle, MP.eta0, MP.imu_mode
-    )
-    MP.logDataToCSV(simTime, simData, vehicle, filename)
+    vehicle, log = MP.runSimulation()
+    MP.logDataToCSV(log, filename)
+
+
+def compareColumns(refNames, refData, outNames, outData, tol):
+    """
+    compareColumns(...) prints the per-column comparison for every reference
+    column and returns True when they all match the output within tol.
+    """
+    print("%-28s %s" % ("column", "max |output - reference|"))
+    print("-" * 55)
+
+    matched = True
+    for k, name in enumerate(refNames):
+        if name not in outNames:
+            print("%-28s %s" % (name, "MISSING from the output"))
+            matched = False
+            continue
+
+        d = np.nanmax(np.abs(outData[:, outNames.index(name)] - refData[:, k]))
+        matched &= d <= tol
+        print("%-28s %.3e %s" % (name, d, "" if d <= tol else "  <-- DIFFERS"))
+
+    print("-" * 55)
+    return matched
 
 
 def compare(refFile, outFile, tol):
     """
     compare(refFile, outFile, tol) prints a per-column comparison and returns
-    True when the output matches the reference.
+    True only when the output matches the reference exactly - same columns,
+    same values. A layout change is a failure like any other; it is up to
+    Jenia to review it and regenerate the reference.
     """
     refNames, refData = readSimData(refFile)
     outNames, outData = readSimData(outFile)
 
-    if refNames != outNames:
-        print("FAIL: column names differ")
-        print("  reference: %s" % refNames)
-        print("  output:    %s" % outNames)
+    if refData.shape[0] != outData.shape[0]:
+        print("FAIL: row count differs - reference %d, output %d"
+              % (refData.shape[0], outData.shape[0]))
         return False
 
-    if refData.shape != outData.shape:
-        print("FAIL: shape differs - reference %s, output %s"
-              % (refData.shape, outData.shape))
+    valuesMatch = compareColumns(refNames, refData, outNames, outData, tol)
+
+    added = [name for name in outNames if name not in refNames]
+    missing = [name for name in refNames if name not in outNames]
+
+    if added or missing:
+        print()
+        if missing:
+            print("columns missing from the output: %s" % ", ".join(missing))
+        if added:
+            print("new columns not in the reference: %s" % ", ".join(added))
+        print()
+        print("FAIL: the column layout no longer matches %s" % refFile)
+
+        if valuesMatch and not missing:
+            print()
+            print("      Every reference column still matches exactly, so this is")
+            print("      the expected failure when new signals are added to the")
+            print("      CSV. Review the new columns above, and if they are what")
+            print("      you intended, regenerate the reference deliberately:")
+            print()
+            print("          cp %s %s" % (outFile, refFile))
         return False
 
-    diff = np.abs(outData - refData)
-    maxDiff = np.nanmax(diff, axis=0)
-
-    failed = [name for name, d in zip(refNames, maxDiff) if d > tol]
-
-    print("%-28s %s" % ("column", "max |output - reference|"))
-    print("-" * 55)
-    for name, d in zip(refNames, maxDiff):
-        print("%-28s %.3e %s" % (name, d, "" if d <= tol else "  <-- DIFFERS"))
-    print("-" * 55)
-
-    if failed:
-        print("FAIL: %d of %d columns differ (tolerance %g): %s"
-              % (len(failed), len(refNames), tol, ", ".join(failed)))
+    if not valuesMatch:
+        print("FAIL: output differs from %s (tolerance %g)" % (refFile, tol))
         return False
 
     print("PASS: output matches %s (%d rows, tolerance %g)"
