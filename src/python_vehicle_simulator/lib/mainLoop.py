@@ -130,7 +130,19 @@ def _computeControl(vehicle, eta_est, nu_est, t, sampleTime):
 ###############################################################################
 # Function simulate(N, sampleTime, vehicle)
 ###############################################################################
-def simulate(N, sampleTime, vehicle, eta0=None, imu_mode="ideal"):
+def simulate(N, sampleTime, vehicle, eta0=None, imu_mode="ideal",
+             buoy=None, buoy_eta0=None, cable=None, dock=None, dock_eta0=None):
+    """
+    buoy, cable, dock: optional docking structure, stepped alongside the
+    vehicle. All default to None, in which case only the vehicle is simulated
+    and the result is unchanged (see compare_simdata.py). The models
+    themselves are not written yet - only the call sites below are in place:
+
+        buoy  - anchor point, static for now, but carries its own IMU and
+                navigation filter, so it is stepped like any other body
+        cable - buoy <-> dock coupling, returns the force acting on the dock
+        dock  - dynamic body at the cable end, with its own IMU and navigation
+    """
 
     DOF = 6                     # degrees of freedom
 
@@ -138,6 +150,12 @@ def simulate(N, sampleTime, vehicle, eta0=None, imu_mode="ideal"):
         eta0 = [0, 0, 0, 0, 0, 0]
 
     initBody(vehicle, eta0, imu_mode=imu_mode)
+
+    if buoy is not None:
+        initBody(buoy, buoy_eta0, imu_mode=imu_mode)
+
+    if dock is not None:
+        initBody(dock, dock_eta0, imu_mode=imu_mode)
 
     # Initialization of table used to store the simulation data
     simData = np.empty( [0, 2*DOF + 2 * vehicle.dimU], float)
@@ -159,6 +177,28 @@ def simulate(N, sampleTime, vehicle, eta0=None, imu_mode="ideal"):
 
         imu_meas = stepBody(vehicle, u_control, sampleTime)
         imuData = np.vstack([imuData, np.append(imu_meas["f_b"], imu_meas["omega_b"])])
+
+        # Docking structure: buoy -> cable -> dock, each body stepped the same
+        # way as the vehicle. Neither the buoy nor the dock has actuators of
+        # its own, hence u_control = None for both.
+        # Logging of the buoy/cable/dock signals comes next, together with the
+        # logger that replaces the growing return tuple.
+
+        # The buoy is a static anchor for now, but it still carries an IMU and
+        # a navigation filter, so it is stepped like any other body - its
+        # dynamics simply holds it in place.
+        if buoy is not None:
+            buoy_imu_meas = stepBody(buoy, None, sampleTime)
+
+        # The cable returns the force acting on the dock, which the dock's
+        # dynamics reads back off .f_ext - the role u_control plays for a
+        # vehicle. It needs both of its ends, so it is only stepped when the
+        # buoy is present too.
+        if dock is not None:
+            if cable is not None and buoy is not None:
+                dock.f_ext = cable.step(buoy.eta, dock.eta, dock.nu, sampleTime)
+
+            dock_imu_meas = stepBody(dock, None, sampleTime)
 
     # Store simulation time vector
     simTime = np.arange(start=0, stop=t+sampleTime, step=sampleTime)[:, None]
