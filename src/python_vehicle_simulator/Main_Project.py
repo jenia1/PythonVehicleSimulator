@@ -11,7 +11,8 @@ import matplotlib.pyplot as plt
 from python_vehicle_simulator.vehicles import DSRV
 from python_vehicle_simulator.structures import Buoy, Dock
 from python_vehicle_simulator.lib import (
-    printVehicleinfo, simulate, plotVehicleStates, plotControls, plot2D
+    printVehicleinfo, simulate, plotVehicleStates, plotControls, plot2D,
+    plotNavigation
 )
 
 ### Simulation parameters ###
@@ -56,8 +57,16 @@ def logDataToCSV(log, filename):
         ("vehicle", "nu"),
         ("vehicle", "u_control"),
         ("vehicle", "u_actual"),
+        ("vehicle", "eta_est"),
+        ("vehicle", "nu_est"),
         ("buoy", "eta"),
+        ("buoy", "nu"),
+        ("buoy", "eta_est"),
+        ("buoy", "nu_est"),
         ("dock", "eta"),
+        ("dock", "nu"),
+        ("dock", "eta_est"),
+        ("dock", "nu_est"),
     ])
 
 
@@ -106,6 +115,12 @@ def main():
     plotVehicleStates(simTime, simData, 1)
     plotControls(simTime, simData, vehicle, 2)
     plot2D(simData, numDataPoints, FPS, filename, 3, markers=markers)
+
+    # Navigation estimate against ground truth, one figure per body. The
+    # error is identically zero while imu_mode is "ideal"; it grows once the
+    # "simple" IMU error model is given real bias/noise values.
+    for figNo, body in enumerate(["vehicle", "buoy", "dock"], start=4):
+        plotNavigation(log, body, figNo)
 
     plt.show()
     plt.close()

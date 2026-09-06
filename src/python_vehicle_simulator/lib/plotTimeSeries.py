@@ -59,11 +59,12 @@ def plotVehicleStates(simTime, simData, figNo):
     alpha_c = R2D(ssa(np.arctan2(w,u)))   # flight path angle
     chi = R2D(ssa(simData[:, 5] + np.arctan2(v, u)))  # course angle, chi=psi+beta_c
 
-    # Plots
+    # Plots. No plt.grid() before the first subplot: with no current axes it
+    # would create a default one spanning the whole figure, whose 0-1 ticks
+    # then show through and collide with the subplots' own tick labels.
     plt.figure(
         figNo, figsize=(cm2inch(figSize1[0]), cm2inch(figSize1[1])), dpi=dpiValue
     )
-    plt.grid()
 
     plt.subplot(3, 3, 1)
     plt.plot(y, x)
@@ -231,6 +232,79 @@ def plot3D(simData,numDataPoints,FPS,filename,figNo):
 # plot2D(simData,numDataPoints,FPS,filename,figNo) plots the vehicle's vertical-plane
 # trajectory (distance travelled x vs. depth z) in figure no. figNo. Intended for
 # vehicles that only move in the x-z plane, e.g. the DSRV.
+# plotNavigation(log, body, figNo) plots the navigation estimate against the
+# true state for one body, together with the estimation error between them.
+# This is what the controller actually sees: with an ideal IMU the error is
+# zero, and it grows as the IMU error model is turned on.
+def plotNavigation(log, body, figNo):
+
+    # Time vector
+    t = log.time
+
+    # True state and navigation estimate
+    eta = log[body]["eta"]
+    nu = log[body]["nu"]
+    eta_est = log[body]["eta_est"]
+    nu_est = log[body]["nu_est"]
+
+    # Estimation error, estimate - truth. Attitude errors are wrapped to
+    # [-pi, pi) so that a difference either side of +/- pi is not shown as a
+    # full revolution.
+    posError = eta_est[:, 0:3] - eta[:, 0:3]
+    attError = R2D(ssa(eta_est[:, 3:6] - eta[:, 3:6]))
+    velError = nu_est[:, 0:3] - nu[:, 0:3]
+
+    positionTitles = ["x (m)", "y (m)", "z (m)"]
+    attitudeTitles = ["phi (deg)", "theta (deg)", "psi (deg)"]
+
+    plt.figure(
+        figNo, figsize=(cm2inch(figSize1[0]), cm2inch(figSize1[1])), dpi=dpiValue
+    )
+
+    # Position, true against estimate
+    for i in range(0, 3):
+        plt.subplot(3, 3, i + 1)
+        plt.plot(t, eta[:, i], '-')
+        plt.plot(t, eta_est[:, i], '--')
+        plt.legend(["true", "estimate"], fontsize=legendSize)
+        plt.title(positionTitles[i])
+        plt.grid()
+
+    # Attitude, true against estimate
+    for i in range(0, 3):
+        plt.subplot(3, 3, i + 4)
+        plt.plot(t, R2D(ssa(eta[:, i + 3])), '-')
+        plt.plot(t, R2D(ssa(eta_est[:, i + 3])), '--')
+        plt.legend(["true", "estimate"], fontsize=legendSize)
+        plt.title(attitudeTitles[i])
+        plt.grid()
+
+    # Estimation error
+    plt.subplot(3, 3, 7)
+    plt.plot(t, posError)
+    plt.legend(["x", "y", "z"], fontsize=legendSize)
+    plt.title("Position error (m)")
+    plt.xlabel("Time (s)", fontsize=12)
+    plt.grid()
+
+    plt.subplot(3, 3, 8)
+    plt.plot(t, attError)
+    plt.legend(["phi", "theta", "psi"], fontsize=legendSize)
+    plt.title("Attitude error (deg)")
+    plt.xlabel("Time (s)", fontsize=12)
+    plt.grid()
+
+    plt.subplot(3, 3, 9)
+    plt.plot(t, velError)
+    plt.legend(["u", "v", "w"], fontsize=legendSize)
+    plt.title("Velocity error (m/s)")
+    plt.xlabel("Time (s)", fontsize=12)
+    plt.grid()
+
+    plt.suptitle("Navigation estimate vs. ground truth: %s" % body, fontsize=14)
+    plt.tight_layout()
+
+
 def plot2D(simData,numDataPoints,FPS,filename,figNo,markers=None):
 
     # markers: optional fixed points to draw in the x-z plane, given as
