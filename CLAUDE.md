@@ -73,6 +73,8 @@ moment it is regenerated. Models with real behaviour — the `Cable` above all
 | `src/python_vehicle_simulator/structures/` | `Buoy`, `Dock` — the docking structure; `Cable` still to come |
 | `src/python_vehicle_simulator/sensors/IMU.py` | IMU model, `"ideal"` or `"simple"` error model |
 | `src/python_vehicle_simulator/navigation/StrapdownINS.py` | IMU-only dead reckoning, no aiding yet |
+| `src/python_vehicle_simulator/navigation/cableGeometry.py` | Proposal eq (2)–(5): the cable pseudo-measurement |
+| `studies/` | Analyses that produce thesis figures, not part of the simulation |
 | `src/python_vehicle_simulator/vehicles/` | 10 standalone Fossen vehicle models, no shared base class |
 | `compare_simdata.py` | The regression check above |
 | `simdata_ref.csv` | Golden reference output (tracked) |
@@ -199,6 +201,123 @@ persistent ~1e-15 velocity residual gives the `z` ramp, ~2e-13 m over 200 s.
 Harmless (0.2 picometres), but worth recognising so it is not mistaken for a
 real effect when hunting small errors later.
 
+## Thesis proposal studies
+
+Two scripts in `studies/`, both run directly, both writing into
+`studies/figures/`:
+
+| script | outputs | purpose |
+|---|---|---|
+| `cableErrorBudget.py` | `fig1`, `fig2` (PDF + PNG), summary table | the Preliminary Results figures |
+| `dockScenario.py` | `anim_dockScenario.gif`, `fig4_dockNavigation_bias<b>` (one per gyro grade), `fig5_dockScenarioSnapshot` | *watching* the same scenario, to understand it |
+
+They share one scene, defined by `runDock()` in `cableErrorBudget.py`: a
+**300 s** run, the buoy and dock half-way along the vehicle's track
+(x ≈ 616 m), the dock `L` below the buoy, and the vehicle holding the dock's
+depth so it passes the dock at t ≈ 151 s. The vehicle has no dock sensing and
+ideal sensors — it only gives the scene its scale. Where the scene sits
+changes none of the error numbers (verified), since every error is relative
+to the dock.
+
+**The free inertial solution is not plotted anywhere — a decision, not an
+omission.** It diverges as `t³` (2 km at 10 °/hr over 300 s), which is
+textbook and not the point of the thesis, and next to centimetre-level cable
+errors it reads like a bug. It is still computed and printed in the
+`cableErrorBudget.py` summary table, marked "for reference only". The old
+fig 3 (the free estimate leaving the eq (4) sphere, and the eq (5)
+projection) was dropped with it, since it had no subject left; the
+animation's reachable region already illustrates eq (4). Do not re-add
+the free INS to a figure without asking.
+
+`dockScenario.py` imports `runDock` from `cableErrorBudget.py`, so there is a
+single definition of the scenario. Its `scenarioGrade` defaults to
+100 °/hr rather than the headline 10 °/hr, purely so the cable estimate moves
+far enough to see on the close-up. The animation shows the thesis concept in
+one picture: the true dock never moves, and the cable estimate (green) walks
+*along* the circle of radius `L` — eq (3) respects eq (4) by construction.
+`fig5` is the frame at the vehicle's closest pass, since an animation cannot
+go in a PDF.
+
+`fig4` is written **once per gyro grade** in `gyroGrades`
+(`fig4_dockNavigation_bias1/10/100`), so the runs can be compared side by
+side. It shows only x, depth and pitch, because the pitch-axis bias leaves
+y, roll and yaw exact — plotting flat zeros is what makes `plotNavigation`
+hard to read. Its position panels scale to the *cable* estimate (never
+tighter than ±2 × capture radius, with the capture band shaded), because
+on a fixed ±15 m axis a 0.03 m or 0.29 m error is invisible. The suptitle
+states the run's outcome in one line. The log error axes drop below 1e-3
+only as far as needed to keep the cable error in view (in depth it is second
+order, tens of micrometres at the tactical grade).
+
+**Changing a gyro grade means changing one number.** `gyroGrades` holds only
+`(bias, grade name)`, and every label in figures, tables and the animation
+is built by `gradeLabel(bias)` from the number itself — e.g.
+`"industrial MEMS, 10 deg/hr"`. A label can therefore never disagree with
+what was simulated. (It once did: a bias was set to 0 while its label still
+read "1 deg/hr".) A bias not in the list is shown by its number alone.
+
+Plotting conventions used there, worth reusing: height (`−z`) on the
+vertical axis with the tick labels shown as positive depth, so deeper is
+lower on the page; one colour per quantity across every figure (truth black,
+cable green, pitch orange, vehicle purple, buoy red).
+
+### The error budget
+
+It answers: how well can the dock's position be known from its navigation
+unit *before* any fusion filter exists? The dock position comes from the
+**cable pseudo-measurement, eq (3)**: the dock's *attitude* with known `p_S`
+and known `L`. Its error is `L · δθ`: linear in time, bounded by `2L`
+however bad the attitude gets. The tether converts what would be an
+unbounded position problem into a bounded attitude problem.
+
+Headline numbers, `L = 10 m`, 300 s approach, 0.5 m capture radius, attitude
+from the unaided gyro (worst case — see the filter plan below):
+
+| gyro bias | attitude error | cable eq (3) | free INS, ref only |
+|---|---|---|---|
+| 1 °/hr tactical | 0.08° | **0.015 m** | 214 m |
+| 10 °/hr industrial MEMS | 0.83° | **0.145 m** | 2 140 m |
+| 100 °/hr consumer MEMS | 8.3° | 1.45 m | 21 391 m |
+
+So a 10 °/hr MEMS unit holds the dock inside the capture radius over a
+five-minute approach; 100 °/hr does not. Halving the run from 600 s halved
+the cable error (linear) and cut the free INS by 8 (`t³`).
+
+**Why the free INS diverges with a perfect accelerometer** — asked more than
+once, so recorded: the accelerometer measures acceleration *minus gravity*
+(9.81 m/s² up, at rest, and it read exactly that). The INS removes gravity
+along the "down" given by its *attitude*; with the gyro-drifted attitude it
+removes it along the wrong direction, and the leftover `g·sin(δθ)` looks like
+a sideways push. Pitch error ∝ t → phantom acceleration ∝ t → velocity ∝ t²
+→ position ∝ t³, and the simulation matches `g·b·t³/6` to four digits. It is
+the `−(fⁿ×)ε` term in row 2 of `F` in the proposal's eq (8). The cable
+estimate avoids it entirely: it multiplies the same pitch error by `L` once,
+with no gravity subtraction and no integration. The simulated cable error is
+overlaid with the closed form `2L·sin(δθ/2)` in fig 2, and they coincide —
+each validates the other.
+
+Geometry worth remembering: for a cable along the dock's body z axis, **roll
+and pitch each swing it by `L·δθ` at any slant, while yaw contributes
+exactly zero at a vertical tether** and only `L·sin(slant)·δψ` once current
+slants it. That is the argument for when the magnetometer earns its place.
+
+Stated assumptions, which belong in the proposal text: taut straight cable
+(`η = 0`), `p_S` known exactly, the AUV's own navigation exact (so the
+`Δp` error of eq (1) equals the `p_D` error — eq (21) with `P_A = 0`), and
+attitude error driven by gyro bias alone so it grows linearly. In the study
+the dock's *only* IMU error is a constant gyro bias on the pitch axis: no
+noise anywhere, accelerometer perfect.
+
+**Agreed next step: a complementary attitude filter on the dock** (sketched,
+not yet built). Levelling roll/pitch against the accelerometer's gravity
+reading bounds the attitude error at `b·τ` instead of `b·t`, and therefore
+bounds the cable estimate — the linear growth above is the unaided worst
+case. It cannot bound the INS *position* (a constant residual leak remains,
+so that still grows as `t²`); only a position reference can, and for the dock
+that reference is the cable itself. Option rejected along the way: giving
+the INS the true attitude for gravity compensation — it is ground truth
+inside the estimator, and it would make the free INS exactly perfect.
+
 ## Conventions
 
 Match the surrounding Fossen style: `###`-banner section headers, docstrings
@@ -236,11 +355,24 @@ reads optional `.U0`. The cable takes `buoy.eta` explicitly rather than
 storing the anchor internally, so the signature still holds when the buoy
 becomes dynamic.
 
-**Next:** the `Cable` model and real `Dock` dynamics. Plan is to write the
-expected behaviours as tests first (rest length → zero force; slack → zero
-force with no discontinuity at the transition; stretched 1 m → `k·1`; force
-on the dock points toward the buoy; damping opposes relative velocity), then
-the model. `pytest` needs installing first.
+**Next, for the proposal:** the complementary attitude filter on the dock
+(see *Thesis proposal studies*; sketched, awaiting Jenia's go-ahead).
+
+**After that:** make the dock *move* on its tether. Parameterise
+its position by cable angles rather than Cartesian coordinates, so
+`‖p_D − p_S‖ = L` — constraint (4) — holds by construction and the
+projection (5) is never needed in the simulation itself. Swing it as a
+pendulum or drift it under current. That turns the error budget above into a
+measurement against a moving truth, which is Objective 1 of the proposal.
+
+**Then, thesis work proper:** the `Cable` force model and real `Dock`
+dynamics. Plan is to write the expected behaviours as tests first (rest
+length → zero force; slack → zero force with no discontinuity at the
+transition; stretched 1 m → `k·1`; force on the dock points toward the buoy;
+damping opposes relative velocity), then the model. `pytest` needs
+installing first. Note this is a *different* cable model from
+`cableGeometry.py`: that one is the navigation measurement, this one is the
+force.
 
 ## Known issues
 
@@ -248,12 +380,28 @@ the model. `pytest` needs installing first.
   values from `dynamics()`, but only `DSRV.py` returns `nu_dot` — the other
   nine vehicles still return the upstream `nu, u_actual`, so they fail with
   `ValueError: not enough values to unpack (expected 3, got 2)`.
-  Pre-existing since commit `f0e6977` (the IMU/nav work). Deliberately not
-  fixed: the thesis uses only the DSRV, and fixing it means deriving
-  body-frame accelerations in nine vehicle models. Revisit only if another
-  vehicle is actually needed.
+  Pre-existing since commit `f0e6977` (the IMU/nav work).
+  **This is a one-line fix per vehicle, not real work** (an earlier note here
+  wrongly called it hard): every model already computes `nu_dot` internally
+  before its Euler step — e.g. `remus100.py:384` — and simply does not return
+  it. Adding `, nu_dot` to the return statement is all that is needed.
+  Relevant because `remus100` is a full 3-DOF-controlled AUV
+  (rudder + stern plane + rpm, `depthHeadingAutopilot` with `ref_z`,
+  `ref_psi`, `ref_n` settable per step), which the DSRV is not — the DSRV
+  pins surge to `U0` and has a single stern plane, so it can control depth
+  but cannot steer or change speed.
 - `tests/test_simulate.py` exercises the tanker, otter and others, so it
   cannot pass until the above is fixed. Its calls were updated to the SimLog
   API but have not been run — `pytest` is not installed in `.venv`.
-- `imu_mode="simple"` is currently identical to `"ideal"`: all the error
-  parameters in `IMU.py` are still zero/identity, awaiting real sensor specs.
+- `imu_mode="simple"` with **no parameters supplied** is still identical to
+  `"ideal"` — the defaults are zero/identity, which is what keeps the
+  reference stable. Supply a specification per body to make it bite:
+
+  ```python
+  dock.imu_params = {"gyro_bias": [0.0, 4.85e-5, 0.0]}   # 10 deg/hr about y
+  log = simulate(..., imu_mode="simple", dock=dock, ...)
+  ```
+
+  `initBody()` picks `.imu_params` off the body via `getattr`, the same trick
+  used for `.U0`, so it works for any body including the vehicle models
+  without touching them.

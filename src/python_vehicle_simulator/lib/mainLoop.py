@@ -74,9 +74,10 @@ def initBody(body, eta0, imu_mode="ideal"):
     body.eta = np.array(eta0, float)              # position/attitude
 
     # imu_mode: "ideal" (no errors) or "simple" (bias/scale/misalignment/
-    # noise error model, currently set to ideal values in IMU.py until real
-    # sensor specs are added)
-    body.imu = IMU(mode=imu_mode)
+    # noise error model). A body may carry its own sensor specification in an
+    # optional .imu_params dict, e.g. dock.imu_params = {"gyro_bias": [...]},
+    # which only takes effect in "simple" mode.
+    body.imu = IMU(mode=imu_mode, **getattr(body, "imu_params", None) or {})
 
     # Navigation: dead-reckons eta_est, nu_est from IMU measurements only.
     # Initialized with the true initial state (a nav system must start
