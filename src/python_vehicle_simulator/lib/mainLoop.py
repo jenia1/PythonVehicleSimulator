@@ -86,8 +86,20 @@ def initBody(body, eta0, imu_mode="ideal"):
     # without a matching Coriolis term in nu_dot[0], so pin the estimate to
     # it too instead of integrating a fictitious accelerometer reading (see
     # StrapdownINS docstring)
+    # A body may carry navigation options in an optional .nav_params dict,
+    # e.g. dock.nav_params = {"complementary_tau": 1.0} to level its roll
+    # and pitch against the accelerometer. Without one the INS is unaided.
     u_const = getattr(body, "U0", None)
-    body.nav = StrapdownINS(body.eta, body.nu, u_const=u_const)
+    body.nav = StrapdownINS(body.eta, body.nu, u_const=u_const,
+                            **getattr(body, "nav_params", None) or {})
+
+    # Coarse alignment, if nav_params asks for it ({"align": True}): before
+    # t = 0 the body rests (nu_dot = 0), so its accelerometer reads gravity
+    # alone, and the INS takes its starting roll and pitch from that reading,
+    # errors included, instead of from the true attitude.
+    if body.nav.align:
+        body.nav.coarseAlign(
+            body.imu.measure(body.eta, body.nu, np.zeros(6))["f_b"])
     body.eta_est, body.nu_est = body.nav.eta_est, body.nav.nu_est
 
 

@@ -72,11 +72,12 @@ moment it is regenerated. Models with real behaviour — the `Cable` above all
 | `src/python_vehicle_simulator/lib/plotTimeSeries.py` | Plots, including `plotNavigation()` (estimate vs. truth) |
 | `src/python_vehicle_simulator/structures/` | `Buoy`, `Dock` — the docking structure; `Cable` still to come |
 | `src/python_vehicle_simulator/sensors/IMU.py` | IMU model, `"ideal"` or `"simple"` error model |
-| `src/python_vehicle_simulator/navigation/StrapdownINS.py` | IMU-only dead reckoning, no aiding yet |
+| `src/python_vehicle_simulator/navigation/StrapdownINS.py` | IMU dead reckoning, with an optional complementary filter on roll/pitch and an optional coarse alignment at the start |
 | `src/python_vehicle_simulator/navigation/cableGeometry.py` | Proposal eq (2)–(5): the cable pseudo-measurement |
 | `studies/` | Analyses that produce thesis figures, not part of the simulation |
 | `src/python_vehicle_simulator/vehicles/` | 10 standalone Fossen vehicle models, no shared base class |
 | `compare_simdata.py` | The regression check above |
+| `tests/test_levelling.py` | Checks for the complementary filter and the coarse alignment; `python3 tests/test_levelling.py` (pytest-compatible, pytest not installed) |
 | `simdata_ref.csv` | Golden reference output (tracked) |
 | `simdata.csv` | Current run output (regenerated, untracked) |
 
@@ -209,79 +210,135 @@ Two scripts in `studies/`, both run directly, both writing into
 | script | outputs | purpose |
 |---|---|---|
 | `cableErrorBudget.py` | `fig1`, `fig2` (PDF + PNG), summary table | the Preliminary Results figures |
-| `dockScenario.py` | `anim_dockScenario.gif`, `fig4_dockNavigation_bias<b>` (one per gyro grade), `fig5_dockScenarioSnapshot` | *watching* the same scenario, to understand it |
+| `dockScenario.py` | `fig4_dockScenario` (PDF + PNG), `anim_dockScenario.gif` | *watching* the same scenario, to understand it |
 
-They share one scene, defined by `runDock()` in `cableErrorBudget.py`: a
-**300 s** run, the buoy and dock half-way along the vehicle's track
-(x ≈ 616 m), the dock `L` below the buoy, and the vehicle holding the dock's
-depth so it passes the dock at t ≈ 151 s. The vehicle has no dock sensing and
-ideal sensors — it only gives the scene its scale. Where the scene sits
-changes none of the error numbers (verified), since every error is relative
-to the dock.
+The gaps in the numbering (no fig 3 or fig 5) are history, not missing
+files. The proposal numbers its own figures.
+
+They share one scene, defined by `runDock(grade, levelled)` in
+`cableErrorBudget.py`: a **300 s** run, the buoy and dock half-way along the
+vehicle's track (x ≈ 616 m), the dock `L` below the buoy, and the vehicle
+holding the dock's depth so it passes the dock at t ≈ 151 s. The vehicle has
+no dock sensing and ideal sensors — it only gives the scene its scale. Where
+the scene sits changes none of the error numbers (verified), since every
+error is relative to the dock. `runAll()` runs every grade twice, unaided
+and levelled (six runs, about 10 s in total). `dockScenario.py` imports
+`runAll`, so there is a single definition of the scenario.
 
 **The free inertial solution is not plotted anywhere — a decision, not an
-omission.** It diverges as `t³` (2 km at 10 °/hr over 300 s), which is
-textbook and not the point of the thesis, and next to centimetre-level cable
-errors it reads like a bug. It is still computed and printed in the
-`cableErrorBudget.py` summary table, marked "for reference only". The old
-fig 3 (the free estimate leaving the eq (4) sphere, and the eq (5)
-projection) was dropped with it, since it had no subject left; the
-animation's reachable region already illustrates eq (4). Do not re-add
-the free INS to a figure without asking.
+omission.** It diverges as `t³` (2 km at the tactical grade over 300 s),
+which is textbook and not the point of the thesis, and next to
+centimetre-level cable errors it reads like a bug. It is still computed and
+printed in the `cableErrorBudget.py` summary table, marked "for reference
+only". The old fig 3 (the free estimate leaving the eq (4) sphere, and the
+eq (5) projection) was dropped with it, since it had no subject left; the
+close-up's reachable region already illustrates eq (4). Do not re-add the
+free INS to a figure without asking.
 
-`dockScenario.py` imports `runDock` from `cableErrorBudget.py`, so there is a
-single definition of the scenario. Its `scenarioGrade` defaults to
-100 °/hr rather than the headline 10 °/hr, purely so the cable estimate moves
-far enough to see on the close-up. The animation shows the thesis concept in
-one picture: the true dock never moves, and the cable estimate (green) walks
-*along* the circle of radius `L` — eq (3) respects eq (4) by construction.
-`fig5` is the frame at the vehicle's closest pass, since an animation cannot
-go in a PDF.
+### The IMU grades
 
-`fig4` is written **once per gyro grade** in `gyroGrades`
-(`fig4_dockNavigation_bias1/10/100`), so the runs can be compared side by
-side. It shows only x, depth and pitch, because the pitch-axis bias leaves
-y, roll and yaw exact — plotting flat zeros is what makes `plotNavigation`
-hard to read. Its position panels scale to the *cable* estimate (never
-tighter than ±2 × capture radius, with the capture band shaded), because
-on a fixed ±15 m axis a 0.03 m or 0.29 m error is invisible. The suptitle
-states the run's outcome in one line. The log error axes drop below 1e-3
-only as far as needed to keep the cable error in view (in depth it is second
-order, tens of micrometres at the tactical grade).
+From Groves' table *Typical Accelerometer and Gyro Biases for Different
+Grades of IMU* (Jenia supplied it as an image, 2026-09-21). One entry per
+row that matters for a dock, at the middle of each range on a log scale:
 
-**Changing a gyro grade means changing one number.** `gyroGrades` holds only
-`(bias, grade name)`, and every label in figures, tables and the animation
-is built by `gradeLabel(bias)` from the number itself — e.g.
-`"industrial MEMS, 10 deg/hr"`. A label can therefore never disagree with
+| grade | gyro bias | accel bias | source |
+|---|---|---|---|
+| intermediate | 0.1 °/hr | 0.3 mg | table: 0.1 °/hr, 0.1–1 mg |
+| tactical | 10 °/hr | 3 mg | table: 1–100 °/hr, 1–10 mg |
+| consumer | 1000 °/hr | 30 mg | table gives only **>100 °/hr, >3 mg**; one decade past those bounds is *our assumption* |
+
+State the consumer extrapolation in the proposal. These replaced an earlier
+gyro-only list (1 / 10 / 100 °/hr, named tactical / industrial MEMS /
+consumer MEMS), whose names did not match Groves: by his table all three
+are tactical.
+
+**Changing a grade means changing one line.** `imuGrades` holds
+`(gyro deg/hr, accel mg, name)`, and every label in figures, tables and the
+animation is built by `gradeLabel(grade)` from those numbers, e.g.
+`"tactical, 10 deg/hr, 3 mg"`. A label can therefore never disagree with
 what was simulated. (It once did: a bias was set to 0 while its label still
-read "1 deg/hr".) A bias not in the list is shown by its number alone.
+read "1 deg/hr".) `mg` converts with g = 9.81 to match `IMU.g`, so `b_a/g`
+is exactly `mg × 1e-3`.
 
-Plotting conventions used there, worth reusing: height (`−z`) on the
-vertical axis with the tick labels shown as positive depth, so deeper is
-lower on the page; one colour per quantity across every figure (truth black,
-cable green, pitch orange, vehicle purple, buoy red).
+### Unaided vs levelled, from the true attitude
+
+Each grade is run twice. **Unaided** means the attitude comes from the gyro
+alone. **Levelled** adds the complementary filter, τ = 1 s. **Both start
+from the dock's true attitude**, so every curve starts at zero.
+
+The decisions behind this, with the reasons (Jenia, 2026-09-21):
+- **An accelerometer bias only matters with levelling.** Unaided, the
+  attitude never looks at the accelerometer, so the accel bias does not
+  touch the cable estimate at all.
+- **Levelling trades one error for another.** It swaps the gyro's growing
+  error `L·b·t` for a fixed floor, `L·(b_a/g + b·τ)`, which it reaches
+  within a few τ. The accelerometer mostly sets that floor.
+- **Alignment is assumed perfect.** Jenia: an alignment is done before the
+  start, and it is not the subject here. So the study does not use the
+  `align` option.
+
+  It was tried first. A real alignment against a biased accelerometer
+  would start both runs at the `atan(b_a/g)` tilt: at 30 mg, the consumer
+  curves started 0.30 m off. That offset was unexplained in the figures
+  and read as a puzzle.
+
+Because the start is perfect, **the dashed and solid lines of a grade
+cross**. The unaided error starts at zero and grows. The levelled error
+jumps to its floor within seconds and stays there. So unaided is better
+until it reaches the floor, roughly at `t ≈ (b_a/g)/b`:
+
+| grade | levelled is better after | unaided leaves the capture radius |
+|---|---|---|
+| intermediate | 620 s (never, within 300 s) | never within 300 s |
+| tactical | 63 s | 1031 s (never, within 300 s) |
+| consumer | 7 s | 10.3 s |
+
+At the intermediate grade the unaided gyro beats the levelled filter for
+the whole run (1.5 mm against 3.0 mm). That is real, not a bug: a
+complementary filter with a biased accelerometer converges to the biased
+tilt, and this gyro drifts less than that in 300 s. Levelling earns its
+place on the cheap units, which is what the dock is meant to be.
 
 ### The error budget
 
 It answers: how well can the dock's position be known from its navigation
 unit *before* any fusion filter exists? The dock position comes from the
 **cable pseudo-measurement, eq (3)**: the dock's *attitude* with known `p_S`
-and known `L`. Its error is `L · δθ`: linear in time, bounded by `2L`
-however bad the attitude gets. The tether converts what would be an
-unbounded position problem into a bounded attitude problem.
+and known `L`. Its error is `L · δθ`, bounded by `2L` however bad the
+attitude gets. The tether converts what would be an unbounded position
+problem into a bounded attitude problem.
 
-Headline numbers, `L = 10 m`, 300 s approach, 0.5 m capture radius, attitude
-from the unaided gyro (worst case — see the filter plan below):
+Headline numbers, `L = 10 m`, 300 s approach, 0.5 m capture radius:
 
-| gyro bias | attitude error | cable eq (3) | free INS, ref only |
-|---|---|---|---|
-| 1 °/hr tactical | 0.08° | **0.015 m** | 214 m |
-| 10 °/hr industrial MEMS | 0.83° | **0.145 m** | 2 140 m |
-| 100 °/hr consumer MEMS | 8.3° | 1.45 m | 21 391 m |
+| grade | pitch error, unaided / levelled | cable eq (3), unaided | cable eq (3), levelled | free INS, ref only, unaided / levelled |
+|---|---|---|---|---|
+| intermediate | 0.008° / 0.017° | **1.5 mm** | 3.0 mm | 111 m / 0.7 m |
+| tactical | 0.83° / 0.18° | 145 mm | **30.5 mm** | 816 m / 12 m |
+| consumer | 83° / 2.0° | 13.3 m | **347 mm** | 191 km / 2.0 km |
 
-So a 10 °/hr MEMS unit holds the dock inside the capture radius over a
-five-minute approach; 100 °/hr does not. Halving the run from 600 s halved
-the cable error (linear) and cut the free INS by 8 (`t³`).
+What these numbers show:
+- **Levelled, every grade holds the dock inside the capture radius,** the
+  consumer grade included. The accelerometer sets the size: `L·b_a/g` is
+  3, 30 and 300 mm, and the gyro adds only `L·b·τ` on top (0.005, 0.5 and
+  47 mm).
+- **Unaided, the consumer unit is outside the capture radius after 10.3 s**
+  and ends 13.3 m off. Intermediate and tactical stay inside for the whole
+  300 s.
+
+(The free-INS columns now include the accelerometer bias integrated twice,
+`b_a·t²/2`, on top of the gyro's gravity leak. That is why they differ from
+the older gyro-only numbers above. They are for reference only.)
+
+**The closed form is exact, and every run checks against it.**
+`pitchErrorClosedForm()` gives the pitch error from the grade's numbers
+alone:
+- unaided: `b·t` (the accelerometer never enters)
+- levelled: `(atan(b_a/g) + b(τ − dt))(1 − αⁿ)`
+
+`cableErrorClosedForm()` turns it into the chord `2L·sin(δθ/2)`. The
+simulation matches both to **2.9e-12 m** over every run and sample, and
+`summaryTable()` prints that gap on every run. Fig 2 marks the closed form
+on every curve.
 
 **Why the free INS diverges with a perfect accelerometer** — asked more than
 once, so recorded: the accelerometer measures acceleration *minus gravity*
@@ -292,31 +349,150 @@ a sideways push. Pitch error ∝ t → phantom acceleration ∝ t → velocity �
 → position ∝ t³, and the simulation matches `g·b·t³/6` to four digits. It is
 the `−(fⁿ×)ε` term in row 2 of `F` in the proposal's eq (8). The cable
 estimate avoids it entirely: it multiplies the same pitch error by `L` once,
-with no gravity subtraction and no integration. The simulated cable error is
-overlaid with the closed form `2L·sin(δθ/2)` in fig 2, and they coincide —
-each validates the other.
+with no gravity subtraction and no integration.
 
 Geometry worth remembering: for a cable along the dock's body z axis, **roll
 and pitch each swing it by `L·δθ` at any slant, while yaw contributes
 exactly zero at a vertical tether** and only `L·sin(slant)·δψ` once current
 slants it. That is the argument for when the magnetometer earns its place.
 
-Stated assumptions, which belong in the proposal text: taut straight cable
-(`η = 0`), `p_S` known exactly, the AUV's own navigation exact (so the
-`Δp` error of eq (1) equals the `p_D` error — eq (21) with `P_A = 0`), and
-attitude error driven by gyro bias alone so it grows linearly. In the study
-the dock's *only* IMU error is a constant gyro bias on the pitch axis: no
-noise anywhere, accelerometer perfect.
+Stated assumptions, which belong in the proposal text:
+- a taut, straight cable (`η = 0`)
+- `p_S` known exactly
+- the AUV's own navigation exact, so the `Δp` error of eq (1) equals the
+  `p_D` error (eq (21) with `P_A = 0`)
+- the dock starts with its true attitude: alignment before the run is
+  assumed perfect
+- the dock hangs still, which the levelling relies on
+- the dock's IMU errors are constant biases only: a gyro bias about the
+  pitch axis and an accelerometer bias along x, with no noise anywhere
 
-**Agreed next step: a complementary attitude filter on the dock** (sketched,
-not yet built). Levelling roll/pitch against the accelerometer's gravity
-reading bounds the attitude error at `b·τ` instead of `b·t`, and therefore
-bounds the cable estimate — the linear growth above is the unaided worst
-case. It cannot bound the INS *position* (a constant residual leak remains,
-so that still grows as `t²`); only a position reference can, and for the dock
-that reference is the cable itself. Option rejected along the way: giving
-the INS the true attitude for gravity compensation — it is ground truth
-inside the estimator, and it would make the free INS exactly perfect.
+Both biases tilt pitch the same way, so their effects add; with opposite
+signs they would partly cancel, so adding is the worst case.
+
+### The figures
+
+- **fig 1:** pure eq (3) geometry, one panel: position error against
+  attitude error for several cable lengths, with a marker where each
+  length reaches the capture radius and that angle in the legend (5.7° at
+  L = 5 m, 2.9° at 10 m, 1.4° at 20 m, 0.6° at 50 m). It doesn't depend on
+  the grades. That tolerance is the panel's point, and the reason Jenia
+  kept it.
+
+  A second panel, showing roll, pitch and yaw against tether slant, was
+  dropped (Jenia, 2026-09-23): it plotted a constant and a sine, which the
+  proposal text states in a sentence instead. Its content is still in
+  *Geometry worth remembering* above. The remaining panel now perturbs
+  **pitch**, the axis the study uses; it perturbed roll before, which gives
+  an identical curve but reads oddly next to a pitch-only study.
+- **fig 2:** cable error against time, one colour per grade, dashed
+  unaided, solid levelled. The closed form appears as hollow markers every
+  20 s; markers rather than a line, because a dotted line over a dashed one
+  reads as dash-dot. The axis spans 0 to 2× the capture radius, the scale
+  that matters for docking. The consumer-unaided curve leaves it, so it is
+  annotated with its end value. The floor sits slightly below zero so
+  millimetre errors are not hidden under the axis line.
+- **fig4_dockScenario:** everything in one figure. Jenia asked for the
+  three per-grade fig 4s and fig 5 to be united.
+  - (a) The scene at the vehicle's closest pass, with a numbers box: each
+    run's error, `*` when outside the capture radius.
+  - (b) The close-up. All six estimates walk *along* the circle of radius
+    `L`, because eq (3) respects eq (4) by construction. Hollow markers are
+    unaided, filled are levelled.
+  - (c)–(e) The dock's x, depth and pitch against time, truth against
+    every estimate. Each axis spans ±2× the capture radius with the band
+    shaded. In pitch the band is `2·asin(r/2L)`, the pitch error that
+    reaches the capture radius. A curve that leaves the axis gets a note.
+
+  Only x, depth and pitch appear, because the biases leave y, roll and yaw
+  exact.
+
+  The still figure is `draw(kPass, full=True)`, the whole run with a cursor
+  at the pass. The GIF is the same figure drawn by `draw(k)`, with the
+  histories growing up to the cursor.
+
+  Log-scale error panels were dropped (Jenia: "we don't need the log plots
+  at this point"). The cost: millimetre-level curves look flat, so the
+  numbers box carries them.
+
+Plotting conventions, worth reusing:
+- Height (`−z`) goes on the vertical axis, with tick labels shown as
+  positive depth, so deeper is lower on the page.
+- One colour per thing across every figure: truth black, vehicle purple,
+  buoy red, and the grades (`gradeColours`) intermediate blue, tactical
+  green, consumer orange.
+- Unaided is dashed with hollow markers; levelled is solid with filled
+  markers.
+- `save()` writes PDFs without a creation date. An unchanged figure then
+  stays byte-identical on a re-run and stays out of `git status` (it once
+  showed fig 1 and fig 2 as modified when nothing had changed).
+
+### The complementary filter and coarse alignment
+
+`StrapdownINS(..., complementary_tau=τ)` levels roll and pitch against the
+accelerometer after each gyro step. It is written in the textbook form Jenia
+knows (xplicity.com's complementary-filter article):
+
+```
+angle = alpha * angleGyro + (1 - alpha) * angleAcc,   alpha = 1 - dt/τ
+```
+
+computed as `angleGyro + (1 − alpha)·ssa(angleAcc − angleGyro)` so the
+difference wraps at ±180°. **τ = 1 s** was chosen (Jenia), which at
+dt = 0.02 s is the familiar `alpha = 0.98`. τ is the parameter rather than
+alpha because alpha depends on the sample rate; τ is a physical time. The
+accelerometer angles, `roll = atan2(−f_y, −f_z)` and
+`pitch = atan2(f_x, √(f_y² + f_z²))`, were verified against the IMU model to
+3.6e-15°. They live in one function, `accelerometerAttitude()`, used by
+both the filter and the alignment. Yaw is not levelled (gravity has no
+heading information).
+
+`StrapdownINS(..., align=True)` asks for a **coarse alignment**. It is
+built and tested but **not used by the study**, which assumes a perfect
+start (see *Unaided vs levelled* above). It is kept for when a realistic
+start matters. `initBody`
+then reads the IMU once with `nu_dot = 0` (the body is at rest before t = 0)
+and calls `coarseAlign(f_b)`, which sets roll and pitch from the
+accelerometer, errors included. Yaw stays at the true value. It lives in
+`initBody` rather than in the first `update()` because it has to happen
+before the t = 0 sample is logged.
+
+**Both are opt-in per body**, like `imu_params`: `dock.nav_params =
+{"complementary_tau": 1.0, "align": True}`, picked up by `initBody` via
+`getattr`. Both are off by default, so every existing run and
+`simdata_ref.csv` are unchanged (verified). Only the dock should get them:
+both assume the body is not accelerating, which is wrong for the
+manoeuvring vehicle.
+
+`tests/test_levelling.py` has 9 checks against the exact discrete
+behaviour:
+- **Filter:** off by default; an ideal IMU stays level; a gyro bias settles
+  at `b(τ − dt)`; an accel bias settles at `atan(b_a/g)`; an initial error
+  decays as `(1 − dt/τ)ⁿ`.
+- **Alignment:** off by default; aligned but unaided, the error is
+  `atan(b_a/g)` throughout; aligned and levelled, the whole trajectory
+  matches `atan(b_a/g) + b(τ − dt)(1 − αⁿ)`.
+- **The study's case:** levelled from the true attitude with both biases,
+  the whole trajectory matches the study's closed form.
+
+Every check was shown to catch deliberately broken code (an alignment that
+does nothing, a flipped sign, roll only). A sign flip in the accelerometer
+pitch is caught *only* by the accel-bias check: with an ideal IMU or a pure
+gyro bias the accelerometer pitch is zero, so its sign is invisible.
+
+What levelling cannot do:
+- **Bound the INS *position*.** A constant residual gravity leak remains,
+  so it still grows as `t²`. Only a position reference can bound it, and
+  for the dock that is the cable.
+- **Level yaw.**
+- **Work for a swinging dock.** Its accelerometer mostly measures cable
+  tension along the cable, so it cannot see the swing angle eq (3) needs.
+  That is likely the central research question for eq (3), and where this
+  study continues once the dock moves.
+
+Option rejected along the way: giving the INS the true attitude for gravity
+compensation. That is ground truth inside the estimator, and it would make
+the free INS exactly perfect.
 
 ## Conventions
 
@@ -355,15 +531,39 @@ reads optional `.U0`. The cable takes `buoy.eta` explicitly rather than
 storing the anchor internally, so the signature still holds when the buoy
 becomes dynamic.
 
-**Next, for the proposal:** the complementary attitude filter on the dock
-(see *Thesis proposal studies*; sketched, awaiting Jenia's go-ahead).
+**For the proposal:** the Preliminary Results figures are in place: fig 1,
+fig 2 and `fig4_dockScenario`, with the Groves grades, unaided against
+levelled, both from the true attitude.
+
+A first draft of the proposal's *Preliminary Results* section exists
+(2026-09-22). The proposal is a separate local git repo at
+`../../Proposal/Proposel.tex`, built with `latexmk`. The draft covers the
+simulation, the error-free baseline, and this study, and it states the
+assumptions above.
+
+The three figure PDFs are **copies** in `../../Proposal/figures/`. After
+regenerating a figure here, copy it there again, or the proposal shows the
+old one.
+
+Open items in the draft:
+- a `TODO(Jenia)` asks for the true source of the Groves bias table: the
+  book, or possibly his tutorial paper
+- the new references (Fossen handbook, PythonVehicleSimulator, Mahony 2008)
+  should be verified
+- fig 4 is too dense at page width, and needs a proposal version
+
+The draft calls the complementary-filter weight `γ`, not `α`, because the
+proposal already uses `α_k` for the robust EKF's adaptive factor. The code
+keeps `alpha`.
 
 **After that:** make the dock *move* on its tether. Parameterise
 its position by cable angles rather than Cartesian coordinates, so
 `‖p_D − p_S‖ = L` — constraint (4) — holds by construction and the
 projection (5) is never needed in the simulation itself. Swing it as a
 pendulum or drift it under current. That turns the error budget above into a
-measurement against a moving truth, which is Objective 1 of the proposal.
+measurement against a moving truth, which is Objective 1 of the proposal. It
+is also where levelling stops working: a swinging dock's accelerometer sees
+cable tension, not gravity.
 
 **Then, thesis work proper:** the `Cable` force model and real `Dock`
 dynamics. Plan is to write the expected behaviours as tests first (rest
@@ -393,6 +593,8 @@ force.
 - `tests/test_simulate.py` exercises the tanker, otter and others, so it
   cannot pass until the above is fixed. Its calls were updated to the SimLog
   API but have not been run — `pytest` is not installed in `.venv`.
+  `tests/test_levelling.py` sidesteps that by also running as a plain
+  script; new checks should do the same until pytest is installed.
 - `imu_mode="simple"` with **no parameters supplied** is still identical to
   `"ideal"` — the defaults are zero/identity, which is what keeps the
   reference stable. Supply a specification per body to make it bite:
