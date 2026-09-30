@@ -4,17 +4,20 @@
 dockScenario.py:
 
     Watch the scenario behind cableErrorBudget.py instead of reading it off
-    error curves. One run of the same scene the proposal figures use:
+    error curves. The same scene the proposal figures use:
 
       - the buoy at the surface, the dock hanging L below it on the cable
       - the vehicle making a straight pass at the dock's depth
-      - the dock's navigation unit carrying a gyro bias about its pitch axis
+      - the dock's navigation unit carrying the biases of an IMU grade, for
+        each grade in cableErrorBudget.imuGrades
 
     and the dock position estimated from that navigation unit through the
     cable, eq (3): the dock's attitude + known buoy position + known cable
-    length,  p_D = p_S + L C^n_b u^b.
+    length,  p_D = p_S + L C^n_b u^b. Each grade is run twice: with the
+    attitude from the gyro alone (unaided), and levelled by the
+    complementary filter.
 
-    The true dock never moves. Everything the estimate does is error.
+    The true dock never moves. Everything the estimates do is error.
 
     The free inertial solution (the dock's accelerometers integrated twice)
     is deliberately not shown: that an unaided INS diverges is textbook, and
@@ -22,23 +25,16 @@ dockScenario.py:
 
     Outputs, in studies/figures/:
 
-      anim_dockScenario.gif      the scene on the left, a close-up of the
-                                 buoy and dock on the right
-      fig5_dockScenarioSnapshot  one frame of it, at the moment the vehicle
-                                 passes the dock (an animation cannot go in
-                                 a PDF)
-      fig4_dockNavigation_bias<b>
-                                 one per gyro grade: true vs estimated dock
-                                 position and pitch, and their errors, for
-                                 the axes that move
+      fig4_dockScenario      everything in one figure: (a) the scene and
+                             (b) a close-up of the buoy and dock, at the
+                             moment the vehicle passes the dock, and (c)-(e)
+                             the dock's true vs estimated x, depth and pitch
+                             over the whole run
+      anim_dockScenario.gif  the same figure in motion
 
 Usage:
 
     python3 studies/dockScenario.py
-
-    scenarioGrade picks the gyro bias. The default, 100 deg/hr, is chosen so
-    that the cable estimate moves far enough to see on the close-up; the
-    headline 10 deg/hr case moves ten times less and would look static.
 
 Author:     Jenia
 """
@@ -55,13 +51,12 @@ from matplotlib.patches import Circle, Patch, Rectangle
 from matplotlib.ticker import FixedLocator, FuncFormatter, MultipleLocator
 
 from cableErrorBudget import (
-    runDock, save, figureDir, gyroGrades, gradeLabel, L, sampleTime,
-    captureRadius, D2R
+    runAll, save, figureDir, imuGrades, gradeColours, gradeLabel, L,
+    sampleTime, captureRadius, complementaryTau, D2R
 )
 from python_vehicle_simulator.navigation import dockPosition
 
 ### Scenario parameters ###
-scenarioGrade = 100.0           # dock gyro bias for this scenario (deg/hr)
 frameEvery = 3.0                # simulated seconds between animation frames
 fps = 15                        # animation frames per second
 trailStride = 10                # samples between points on the drawn trails
@@ -71,14 +66,22 @@ zoomHalfWidth = 1.4
 zoomAbove = 0.35                # above the surface
 zoomBelow = 1.25                # below the buoy, i.e. just past the dock
 
-# One colour per quantity, used in every figure of this script
+# One colour per body. Each dock estimate takes its grade's colour from
+# cableErrorBudget.gradeColours.
 colour = {
     "true": "k",
-    "cable": "C2",
-    "pitch": "C1",
     "vehicle": "C4",
     "buoy": "C3",
 }
+
+# The two attitude sources, and the line style each is drawn with. Unaided
+# estimates also get hollow markers, levelled ones filled.
+modes = ("unaided", "levelled")
+lineStyle = {"unaided": "--", "levelled": "-"}
+
+# The pitch error at which the cable estimate reaches the capture radius,
+# from 2L sin(dtheta/2) = captureRadius. It is the pitch panel's shaded band.
+capturePitch = 2 * np.arcsin(captureRadius / (2 * L))
 
 
 ###############################################################################
@@ -86,7 +89,7 @@ colour = {
 ###############################################################################
 def scenarioData(log):
     """
-    d = scenarioData(log) collects everything the figures need from one run.
+    d = scenarioData(log) collects everything the figure needs from one run.
     Positions are (N+1, 3) with z positive down, angles in radians.
     """
     etaEst = log["dock"]["eta_est"]
@@ -116,127 +119,26 @@ def depthAxis(ax, step):
 
 
 ###############################################################################
-# Figure 4 - navigation, true vs estimated, for the axes that move
+# Figure 4 - the scene, the close-up and the time histories, together
 ###############################################################################
-def figureDockNavigation(d, bias):
+def buildFigure(data):
     """
-    figureDockNavigation(d, bias) plots one run: the dock's true position and
-    pitch against the cable estimate of eq (3), and the errors. Only x, depth
-    and pitch are shown - the pitch-axis bias leaves y, roll and yaw exact.
+    fig, draw, kPass = buildFigure(data) lays out the figure, for
+    data[grade name][mode] = scenarioData(...) of every grade and mode.
 
-    The position panels are scaled to the estimate's excursion, so its
-    motion is visible whatever the gyro grade.
+    draw(k, full=False) puts every moving element at sample k: the scene and
+    the close-up at that moment, and the time histories up to it. With
+    full=True the time histories cover the whole run instead, with a cursor
+    at k - the still figure. kPass is the vehicle's closest pass.
     """
-    t = d["t"]
-    fig, axes = plt.subplots(2, 3, figsize=(11, 6.6), sharex=True)
+    # The vehicle, the buoy and the true dock are identical in every run -
+    # only the dock's navigation unit differs - so they come from any one.
+    first = data[imuGrades[0][2]][modes[0]]
+    t = first["t"]
+    vehicle, true = first["vehicle"], first["true"]
 
-    # --- Row 1: what the dock's navigation unit gives, against the truth ---
-    # x is shown relative to the dock, so it reads as a displacement; depth
-    # is shown as it is, since 10 m below the surface is itself meaningful.
-    rows = ((0, "x", "x relative to the dock (m)", d["true"][0, 0]),
-            (2, "depth z", "depth z (m)", 0.0))
-
-    for col, (k, name, ylabel, offset) in enumerate(rows):
-        ax = axes[0, col]
-        centre = d["true"][0, k] - offset
-
-        # Scaled to how far the estimate goes, but never tighter than twice
-        # the capture radius, so the capture band is always in view
-        excursion = np.abs(d["cable"][:, k] - d["true"][:, k]).max()
-        halfRange = max(2.0 * excursion, 2.0 * captureRadius)
-
-        ax.axhspan(centre - captureRadius, centre + captureRadius,
-                   color="0.85", alpha=0.7,
-                   label="capture radius, +/-%.1f m" % captureRadius)
-        ax.plot(t, d["true"][:, k] - offset, color=colour["true"],
-                linewidth=2.5, label="true dock")
-        ax.plot(t, d["cable"][:, k] - offset, color=colour["cable"],
-                label="cable estimate, eq (3)")
-
-        ax.set_ylim(centre - halfRange, centre + halfRange)
-        if k == 2:
-            ax.invert_yaxis()           # deeper is lower on the page
-
-        ax.set_ylabel(ylabel)
-        ax.set_title("%s: true vs estimated" % name)
-        ax.grid(alpha=0.3)
-
-    axes[0, 0].legend(loc="lower left", fontsize=7)
-
-    ax = axes[0, 2]
-    ax.plot(t, d["thetaTrue"] / D2R, color=colour["true"], linewidth=2.5,
-            label="true pitch")
-    ax.plot(t, d["thetaEst"] / D2R, color=colour["pitch"],
-            label="estimated pitch")
-    ax.set_ylabel("pitch (deg)")
-    ax.set_title("pitch: the error that drives the estimate")
-    ax.legend(loc="upper left")
-    ax.grid(alpha=0.3)
-
-    # --- Row 2: the errors ---
-    for col, (k, name) in enumerate(((0, "x"), (2, "depth z"))):
-        ax = axes[1, col]
-        cableError = np.abs(d["cable"][:, k] - d["true"][:, k])
-        largest = cableError.max()
-
-        ax.semilogy(t, np.maximum(cableError, 1e-9), color=colour["cable"])
-        ax.axhline(captureRadius, color="k", linestyle=":", linewidth=1)
-        ax.text(t[-1], captureRadius, "capture radius ", ha="right",
-                va="bottom", fontsize=7)
-
-        # Both limits set explicitly: with a zero-bias IMU every error sits
-        # far below the axis, and a free upper limit would then invert it.
-        # The floor drops below 1e-3 only as far as needed to keep the error
-        # in view - in depth it is second order, L(1 - cos dtheta), only
-        # micrometres for the tactical grade.
-        bottom = max(1e-6, min(1e-3, 0.3 * largest))
-        ax.set_ylim(bottom, max(1.0, 3.0 * largest))
-        if largest < 1e-6:
-            ax.text(0.5, 0.5, "no error:\nestimate = truth",
-                    transform=ax.transAxes, ha="center", va="center",
-                    fontsize=9, color="0.4")
-
-        ax.set_xlabel("time (s)")
-        ax.set_ylabel("|%s error| (m)" % name.split()[-1])
-        ax.set_title("%s error of the cable estimate (log)" % name)
-        ax.grid(alpha=0.3, which="both")
-
-    ax = axes[1, 2]
-    ax.plot(t, (d["thetaEst"] - d["thetaTrue"]) / D2R, color=colour["pitch"])
-    ax.set_xlabel("time (s)")
-    ax.set_ylabel("pitch error (deg)")
-    ax.set_title("pitch error = gyro bias x time")
-    ax.grid(alpha=0.3)
-
-    # The one-line outcome of the run, so each figure stands on its own
-    cableEnd = np.linalg.norm(d["cable"][-1] - d["true"][-1])
-    fig.suptitle(
-        "Dock navigation - %s gyro bias about the pitch axis\n"
-        "After %.0f s the cable estimate is %.3f m off, %s the %.1f m "
-        "capture radius"
-        % (gradeLabel(bias), t[-1], cableEnd,
-           "inside" if cableEnd <= captureRadius else "OUTSIDE",
-           captureRadius),
-        fontsize=10)
-    fig.text(0.5, 0.005,
-             "Only x, depth and pitch are shown: a pitch-axis bias leaves y, "
-             "roll and yaw exact. The vehicle and buoy have ideal IMUs in "
-             "this scenario, so their estimates equal the truth.",
-             ha="center", va="bottom", fontsize=7, color="0.4")
-    fig.tight_layout(rect=(0, 0.03, 1, 1))
-    save(fig, "fig4_dockNavigation_bias%g" % bias)
-
-
-###############################################################################
-# Animation - the scene and a close-up of the dock
-###############################################################################
-def animateScenario(d, bias):
-
-    t = d["t"]
-    vehicle, true, cable = d["vehicle"], d["true"], d["cable"]
-
-    xS, zS = d["source"][0, 0], d["source"][0, 2]       # buoy, fixed
-    xD, zD = true[0, 0], true[0, 2]                     # true dock, fixed
+    xS, zS = first["source"][0, 0], first["source"][0, 2]   # buoy, fixed
+    xD, zD = true[0, 0], true[0, 2]                         # true dock, fixed
 
     # Closest approach of the vehicle to the dock
     vehicleDistance = np.linalg.norm(vehicle - true, axis=1)
@@ -245,11 +147,22 @@ def animateScenario(d, bias):
     # Trails are drawn from every trailStride-th sample, not every sample
     trailIndex = np.arange(0, len(t), trailStride)
 
-    fig = plt.figure(figsize=(12.5, 6.0))
-    grid = fig.add_gridspec(1, 2, width_ratios=[1.35, 1], wspace=0.2,
-                            left=0.06, right=0.98, top=0.83, bottom=0.25)
-    axScene = fig.add_subplot(grid[0])
-    axZoom = fig.add_subplot(grid[1])
+    # Every estimate, as (grade, its colour, mode, its data)
+    runs = [(grade, gradeColour, mode, data[grade[2]][mode])
+            for grade, gradeColour in zip(imuGrades, gradeColours)
+            for mode in modes]
+
+    fig = plt.figure(figsize=(13, 9.8))
+    grid = fig.add_gridspec(2, 3, height_ratios=[1.15, 1], hspace=0.35,
+                            wspace=0.3, left=0.06, right=0.98, top=0.9,
+                            bottom=0.2)
+    # The top row is split on its own, so the close-up gets a wider share
+    top = grid[0, :].subgridspec(1, 2, width_ratios=[1.55, 1], wspace=0.15)
+    axScene = fig.add_subplot(top[0])
+    axZoom = fig.add_subplot(top[1])
+    axX = fig.add_subplot(grid[1, 0])
+    axDepth = fig.add_subplot(grid[1, 1], sharex=axX)
+    axPitch = fig.add_subplot(grid[1, 2], sharex=axX)
 
     # Close-up window, in plot coordinates (x, height = -z)
     zoomX = (xS - zoomHalfWidth * L, xS + zoomHalfWidth * L)
@@ -279,6 +192,8 @@ def animateScenario(d, bias):
     vehicleTrail, = axScene.plot([], [], color=colour["vehicle"], linewidth=1.5)
     vehicleMark, = axScene.plot([], [], ">", color=colour["vehicle"],
                                 markersize=9, zorder=4)
+
+    # The numbers at sample k, in the empty water below the vehicle's track
     sceneText = axScene.text(
         0.99, 0.04, "", transform=axScene.transAxes, ha="right", va="bottom",
         fontsize=8, family="monospace",
@@ -324,79 +239,181 @@ def animateScenario(d, bias):
     axZoom.add_patch(Circle((xD, -zD), captureRadius, fill=False,
                             edgecolor="k", linestyle=":", linewidth=1.2))
 
-    cableTrail, = axZoom.plot([], [], color=colour["cable"], linewidth=1,
-                              alpha=0.6)
-    cableLine, = axZoom.plot([], [], "--", color=colour["cable"],
-                             linewidth=1.5)
-    cableMark, = axZoom.plot([], [], "o", color=colour["cable"],
-                             markersize=8, zorder=6)
+    # Each estimate: its trail, its cable from the buoy, and its marker.
+    # Unaided markers are hollow and larger, so a levelled one on the same
+    # spot still shows inside it.
+    zoomArtists = []
+    for grade, gradeColour, mode, d in runs:
+        trailLine, = axZoom.plot([], [], color=gradeColour, linewidth=1,
+                                 alpha=0.6)
+        cableLine, = axZoom.plot([], [], color=gradeColour, linewidth=1.2,
+                                 linestyle=lineStyle[mode])
+        mark, = axZoom.plot(
+            [], [], "o", color=gradeColour, zorder=6,
+            markersize=10 if mode == "unaided" else 6,
+            markerfacecolor="none" if mode == "unaided" else gradeColour,
+            markeredgewidth=1.5)
+        zoomArtists.append((trailLine, cableLine, mark))
+
     vehicleZoom, = axZoom.plot([], [], ">", color=colour["vehicle"],
                                markersize=10, alpha=0.75, zorder=4)
-    zoomText = axZoom.text(
-        0.02, 0.98, "", transform=axZoom.transAxes, ha="left", va="top",
-        fontsize=8, family="monospace",
-        bbox=dict(facecolor="white", edgecolor="grey", alpha=0.9))
-
     axZoom.set_title("(b) close-up at the buoy and dock", fontsize=9)
 
-    # --- one legend for both panels ---
+    # --- (c)-(e) the time histories ---
+    # Each panel: truth, the estimate of every run, a shaded band for the
+    # capture radius, and an axis twice as wide as the band, the scale that
+    # matters for docking. An estimate that leaves the axis is marked where
+    # it does.
+    panels = [
+        dict(ax=axX, title="(c) x: true vs estimated",
+             ylabel="x relative to the dock (m)",
+             truth=true[:, 0] - xD, centre=0.0, band=captureRadius,
+             estimate=lambda d: d["cable"][:, 0] - xD),
+        dict(ax=axDepth, title="(d) depth: true vs estimated",
+             ylabel="depth z (m)",
+             truth=true[:, 2], centre=zD, band=captureRadius,
+             estimate=lambda d: d["cable"][:, 2]),
+        dict(ax=axPitch, title="(e) pitch: true vs estimated",
+             ylabel="pitch (deg)",
+             truth=first["thetaTrue"] / D2R, centre=0.0,
+             band=capturePitch / D2R,
+             estimate=lambda d: d["thetaEst"] / D2R),
+    ]
+
+    for panel in panels:
+        ax, centre, band = panel["ax"], panel["centre"], panel["band"]
+        low, high = centre - 2 * band, centre + 2 * band
+        inverted = ax is axDepth        # deeper is lower on the page
+
+        ax.axhspan(centre - band, centre + band, color="0.85", alpha=0.7)
+        panel["truthLine"], = ax.plot([], [], color=colour["true"],
+                                      linewidth=2.5)
+
+        panel["lines"], panel["notes"] = [], []
+        for grade, gradeColour, mode, d in runs:
+            y = panel["estimate"](d)
+            line, = ax.plot([], [], color=gradeColour,
+                            linestyle=lineStyle[mode])
+            panel["lines"].append((line, y))
+
+            outside = (y < low) | (y > high)
+            if outside.any():
+                kOut = int(np.argmax(outside))
+                edge = high if y[kOut] > high else low
+                # The note goes inside the axis, below or above the edge
+                # where the curve leaves - on the page, not in data values
+                atTop = (edge == high) != inverted
+                note = ax.annotate(
+                    "%s, %s:\noff the axis" % (grade[2], mode),
+                    xy=(t[kOut], edge), xytext=(14, -22 if atTop else 22),
+                    textcoords="offset points", fontsize=7, color=gradeColour,
+                    va="center", arrowprops=dict(arrowstyle="->",
+                                                 color=gradeColour))
+                panel["notes"].append((note, kOut))
+
+        panel["cursor"] = ax.axvline(0, color="0.5", linewidth=0.8)
+
+        ax.set_xlim(0, t[-1])
+        ax.set_ylim(low, high)
+        if inverted:
+            ax.invert_yaxis()
+        ax.set_xlabel("time (s)")
+        ax.set_ylabel(panel["ylabel"])
+        ax.set_title(panel["title"], fontsize=9)
+        ax.grid(alpha=0.3)
+
+    # --- one legend for every panel ---
     handles = [
         Line2D([], [], marker="o", color=colour["buoy"], linestyle="None",
                markersize=8, label="buoy: source, position known"),
         Line2D([], [], marker="s", color=colour["true"], linewidth=2,
                markersize=7, label="true dock and cable (never moves)"),
-        Line2D([], [], marker="o", color=colour["cable"], linestyle="--",
-               markersize=7,
-               label=r"dock estimate from cable, eq (3): $p_S + L\,C^n_b u^b$"),
-        Patch(facecolor="0.85", edgecolor="0.5", linestyle="--",
-              label=r"reachable region, eq (4): $\|p_D - p_S\| \leq L$"),
-        Line2D([], [], color="k", linestyle=":",
-               label="capture radius %.1f m" % captureRadius),
         Line2D([], [], marker=">", color=colour["vehicle"], markersize=8,
                label="vehicle"),
+        Patch(facecolor="0.85", edgecolor="0.5", linestyle="--",
+              label=r"reachable region, eq (4): $\|p_D - p_S\| \leq L$"),
+        Patch(facecolor="0.85", edgecolor="k", linestyle=":",
+              label="capture radius %.1f m (in pitch: the error that "
+                    "reaches it)" % captureRadius),
+    ]
+    handles += [Line2D([], [], color=gradeColour, linewidth=2,
+                       label="dock estimate, eq (3): " + gradeLabel(grade))
+                for grade, gradeColour in zip(imuGrades, gradeColours)]
+    handles += [
+        Line2D([], [], color="0.3", linestyle="--", marker="o", markersize=7,
+               markerfacecolor="none", label="unaided: gyro alone"),
+        Line2D([], [], color="0.3", marker="o", markersize=5,
+               label=r"levelled: complementary filter, $\tau$ = %g s"
+                     % complementaryTau),
     ]
     fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=8,
-               frameon=False, bbox_to_anchor=(0.5, 0.01))
+               frameon=False, bbox_to_anchor=(0.5, 0.035))
 
     fig.suptitle(
-        "Where is the dock? Its navigation unit has a %s gyro bias.\n"
-        "Black is the truth. Green is the dock position estimated from that "
-        "unit's attitude through the cable, eq (3)." % gradeLabel(bias),
-        fontsize=11)
+        "Dock position estimated through the cable, eq (3), from the "
+        "attitude its own navigation unit gives,\nfor three IMU grades - "
+        "black is the truth, which never moves", fontsize=11)
+    fig.text(0.5, 0.008,
+             "IMU grades from Groves' table of typical biases (consumer: one "
+             "decade past its lower bounds). The dock's INS starts from its "
+             "true attitude (alignment assumed perfect).\nIts gyro bias is about "
+             "the pitch axis and its accelerometer bias along x, so y, roll "
+             "and yaw stay exact. The vehicle and buoy have ideal IMUs.",
+             ha="center", va="bottom", fontsize=7, color="0.4")
 
-    def draw(k):
-        """draw(k) puts every moving element at sample k"""
+    def draw(k, full=False):
+        """draw(k, full) puts every moving element at sample k"""
         trail = trailIndex[trailIndex <= k]
+        upTo = len(t) if full else k + 1
 
-        # (a) scene
+        # (a) the scene
         vehicleTrail.set_data(vehicle[trail, 0], -vehicle[trail, 2])
         vehicleMark.set_data([vehicle[k, 0]], [-vehicle[k, 2]])
-        sceneText.set_text("t = %5.0f s\nvehicle to dock: %7.1f m"
-                           % (t[k], vehicleDistance[k]))
 
-        # (b) cable estimate: always on the circle of radius L, eq (3)/(4)
-        cableTrail.set_data(cable[trail, 0], -cable[trail, 2])
-        cableLine.set_data([xS, cable[k, 0]], [-zS, -cable[k, 2]])
-        cableMark.set_data([cable[k, 0]], [-cable[k, 2]])
-
+        # (b) each estimate is always on the circle of radius L, eq (3)/(4)
+        for (grade, gradeColour, mode, d), (trailLine, cableLine, mark) in \
+                zip(runs, zoomArtists):
+            est = d["cable"]
+            trailLine.set_data(est[trail, 0], -est[trail, 2])
+            cableLine.set_data([xS, est[k, 0]], [-zS, -est[k, 2]])
+            mark.set_data([est[k, 0]], [-est[k, 2]])
         vehicleZoom.set_data([vehicle[k, 0]], [-vehicle[k, 2]])
 
-        cableError = np.linalg.norm(cable[k] - true[k])
-        pitchError = (d["thetaEst"][k] - d["thetaTrue"][k]) / D2R
-        zoomText.set_text(
-            "pitch error      %6.2f deg\n"
-            "cable estimate   %6.3f m  %s"
-            % (pitchError, cableError,
-               "inside capture" if cableError <= captureRadius
-               else "OUTSIDE capture"))
+        # (c)-(e)
+        for panel in panels:
+            panel["truthLine"].set_data(t[:upTo], panel["truth"][:upTo])
+            for line, y in panel["lines"]:
+                line.set_data(t[:upTo], y[:upTo])
+            panel["cursor"].set_xdata([t[k], t[k]])
+            for note, kOut in panel["notes"]:
+                note.set_visible(full or kOut <= k)
 
-        return (vehicleTrail, vehicleMark, sceneText, cableTrail, cableLine,
-                cableMark, vehicleZoom, zoomText)
+        # The numbers, in the scene panel
+        rows = ["t = %3.0f s, vehicle to dock %5.1f m"
+                % (t[k], vehicleDistance[k]),
+                "",
+                "cable estimate off by   %9s %9s" % modes]
+        for grade in imuGrades:
+            cells = []
+            for mode in modes:
+                error = np.linalg.norm(data[grade[2]][mode]["cable"][k]
+                                       - true[k])
+                cells.append("%7.3f m%s" % (error,
+                                            "*" if error > captureRadius
+                                            else " "))
+            rows.append("%-22s %s %s" % (grade[2], cells[0], cells[1]))
+        rows.append("* outside the %.1f m capture radius" % captureRadius)
+        sceneText.set_text("\n".join(rows))
 
+    return fig, draw, kPass
+
+
+def animate(fig, draw, nSamples):
+    """animate(fig, draw, nSamples) writes the figure in motion as a GIF"""
     step = int(round(frameEvery / sampleTime))
-    frames = list(range(0, len(t), step))
-    if frames[-1] != len(t) - 1:
-        frames.append(len(t) - 1)
+    frames = list(range(0, nSamples, step))
+    if frames[-1] != nSamples - 1:
+        frames.append(nSamples - 1)
 
     ani = animation.FuncAnimation(fig, lambda n: draw(frames[n]),
                                   frames=len(frames), blit=False)
@@ -407,27 +424,26 @@ def animateScenario(d, bias):
     print("  wrote anim_dockScenario.gif (%d frames, %.0f s)"
           % (len(frames), len(frames) / fps))
 
-    # One still frame, at the moment the vehicle passes the dock
-    draw(kPass)
-    save(fig, "fig5_dockScenarioSnapshot")
-
 
 ###############################################################################
 # Main program
 ###############################################################################
 def main():
-    # One navigation figure per gyro grade in cableErrorBudget.gyroGrades.
-    # Titles come from gradeLabel(), which builds them from the bias itself.
-    runs = {}
-    for bias, _ in gyroGrades:
-        print("Running the dock scenario, %s..." % gradeLabel(bias))
-        runs[bias] = scenarioData(runDock(bias))
-        figureDockNavigation(runs[bias], bias)
+    print("Running the dock scenario for every grade, unaided and levelled...")
+    runs = runAll()
+    data = {grade[2]: {mode: scenarioData(runs[grade[2]][mode]["log"])
+                       for mode in modes}
+            for grade in imuGrades}
 
-    print("Animating the %g deg/hr run..." % scenarioGrade)
-    if scenarioGrade not in runs:
-        runs[scenarioGrade] = scenarioData(runDock(scenarioGrade))
-    animateScenario(runs[scenarioGrade], scenarioGrade)
+    fig, draw, kPass = buildFigure(data)
+
+    print("Animating...")
+    animate(fig, draw, len(data[imuGrades[0][2]][modes[0]]["t"]))
+
+    # The still figure: the scene at the vehicle's closest pass, above the
+    # whole run
+    draw(kPass, full=True)
+    save(fig, "fig4_dockScenario")
 
 
 if __name__ == "__main__":

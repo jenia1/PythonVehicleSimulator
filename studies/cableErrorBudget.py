@@ -16,6 +16,16 @@ cableErrorBudget.py:
     attitude becomes. The tether turns what would be an unbounded position
     problem into a bounded attitude problem.
 
+    Two ways of getting that attitude are compared, for three IMU grades:
+
+      unaided   the gyro alone. The error grows with time, as b t.
+      levelled  a complementary filter (StrapdownINS) levels roll and pitch
+                against the accelerometer. The error is bounded, at about
+                b tau + b_a / g, so the accelerometer then sets its size.
+
+    Both start from the dock's true attitude: the alignment before the run
+    is assumed perfect, since alignment is not the subject here.
+
     For reference only, the summary table also prints the free inertial
     solution - the dock's accelerometers integrated twice. It grows as t^3,
     because an attitude error makes the INS subtract gravity along the wrong
@@ -27,7 +37,8 @@ cableErrorBudget.py:
 
       fig1_cableSensitivity   eq (3): error amplification by cable length,
                               and which attitude angle actually matters
-      fig2_errorGrowth        eq (3) in time, per IMU grade
+      fig2_errorGrowth        eq (3) in time, per IMU grade, unaided and
+                              levelled, against the closed form
 
 Usage:
 
@@ -35,10 +46,14 @@ Usage:
 
 Assumptions, all stated in the proposal text:
     - taut, straight cable, eta = 0 in (3): no sag, no drag
-    - dock attitude error is driven by gyro bias only, unaided, so it grows
-      linearly. This is the worst case: a real dock filter would level
-      roll/pitch against gravity and bound them. Quoting it as worst case is
-      what motivates the filter design rather than overselling the problem.
+    - the dock starts with its true attitude: alignment before the run is
+      assumed perfect
+    - the dock hangs still, so its accelerometer measures gravity alone -
+      which the levelling relies on
+    - the dock's IMU errors are constant biases from Groves' table of
+      typical values: a gyro bias about the pitch axis and an accelerometer
+      bias along x, signed so that their effects add (the worst case).
+      No noise.
     - the source position p_S is taken as known exactly
 
 Author:     Jenia
@@ -50,6 +65,7 @@ matplotlib.use("Agg")           # figures are written to file, never shown
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
 
 from python_vehicle_simulator.vehicles import DSRV
 from python_vehicle_simulator.structures import Buoy, Dock
@@ -62,33 +78,39 @@ duration = 300.0                # terminal approach duration (s)
 sampleTime = 0.02               # sample time (s)
 captureRadius = 0.5             # magnetic latch capture radius (m)
 
-# Gyro bias (deg/hr) and the name of its sensor grade. The dock unit is meant
-# to be cheap, so the MEMS grades are the ones that matter. Figures and tables
-# build their labels from these through gradeLabel(), so the number shown is
-# always the number simulated: change a bias here and nothing else.
-gyroGrades = [
-    (1.0,   "tactical"),
-    (10.0,  "industrial MEMS"),
-    (100.0, "consumer MEMS"),
+complementaryTau = 1.0          # dock's complementary filter time constant (s)
+
+# IMU grades, from Groves' table of typical biases: (gyro bias in deg/hr,
+# accelerometer bias in mg, grade name). Each value is the middle of the
+# table's range on a log scale. The consumer row gives only lower bounds
+# (>100 deg/hr, >3 mg), so its values are one decade past them - an
+# assumption, not a table value. Figures and tables build their labels from
+# these through gradeLabel(), so the numbers shown are always the numbers
+# simulated: change a grade here and nothing else.
+imuGrades = [
+    (0.1,    0.3,  "intermediate"),
+    (10.0,   3.0,  "tactical"),
+    (1000.0, 30.0, "consumer"),
 ]
 
+# One colour per grade, in the order of imuGrades, used in every figure
+gradeColours = ["C0", "C2", "C1"]
 
-def gradeLabel(bias):
+
+def gradeLabel(grade):
     """
-    label = gradeLabel(bias) is the display label for a gyro bias in deg/hr,
-    e.g. "industrial MEMS, 10 deg/hr", built from the number itself. A bias
-    that is not listed in gyroGrades is shown by its number alone.
+    label = gradeLabel(grade) is the display label for an entry of imuGrades,
+    e.g. "tactical, 10 deg/hr, 3 mg", built from its numbers.
     """
-    for gradeBias, name in gyroGrades:
-        if gradeBias == bias:
-            return "%s, %g deg/hr" % (name, bias)
-    return "%g deg/hr" % bias
+    gyroBias, accelBias, name = grade
+    return "%s, %g deg/hr, %g mg" % (name, gyroBias, accelBias)
 
 # Cable lengths for the sensitivity plot (m)
 cableLengths = [5.0, 10.0, 20.0, 50.0]
 
 D2R = np.pi / 180
 DEG_PER_HOUR = D2R / 3600       # deg/hr -> rad/s
+MILLI_G = 9.81e-3               # mg -> m/s^2, with g = 9.81 as in IMU.g
 
 figureDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
 
@@ -105,15 +127,21 @@ plt.rcParams.update({
 ###############################################################################
 # Simulation
 ###############################################################################
-def runDock(gyroBias_degPerHour):
+def runDock(grade, levelled):
     """
-    log = runDock(gyroBias_degPerHour) runs the simulation with the dock's
-    navigation unit carrying a gyro bias about its y (pitch) axis, which
-    swings the cable in the x direction.
+    log = runDock(grade, levelled) runs the simulation with the dock's
+    navigation unit carrying the biases of one entry of imuGrades: a gyro
+    bias about its y (pitch) axis and an accelerometer bias along its x axis.
+    Both tilt the pitch estimate the same way, so the cable swings in the
+    x direction and their effects add.
 
-    A single-axis bias is used so that the attitude error is exactly
-    bias * t, which makes the simulated result directly comparable with the
-    closed form 2L sin(dtheta/2) and validates both.
+    The dock's INS starts from the true attitude (alignment assumed
+    perfect). levelled: False leaves the attitude to the gyro alone, True
+    adds the complementary filter.
+
+    Single-axis biases are used so that the pitch error has an exact closed
+    form (pitchErrorClosedForm), which makes the simulated result directly
+    comparable with it and validates both.
 
     The scene: the buoy and dock sit half-way along the vehicle's track, and
     the vehicle holds the dock's depth, so it passes the dock at about
@@ -121,14 +149,17 @@ def runDock(gyroBias_degPerHour):
     it only gives the scene its scale. Every error result is relative to the
     dock, so where the scene sits changes none of them.
     """
-    bias = gyroBias_degPerHour * DEG_PER_HOUR
+    gyroBias, accelBias, _ = grade
 
     vehicle = DSRV("depthAutopilot", L, 50.0)       # holds the dock's depth
     xDock = 0.5 * vehicle.U0 * duration             # half-way along the track
 
     buoy = Buoy()
     dock = Dock()
-    dock.imu_params = {"gyro_bias": [0.0, bias, 0.0]}
+    dock.imu_params = {"gyro_bias": [0.0, gyroBias * DEG_PER_HOUR, 0.0],
+                       "accel_bias": [accelBias * MILLI_G, 0.0, 0.0]}
+    if levelled:
+        dock.nav_params = {"complementary_tau": complementaryTau}
 
     N = int(round(duration / sampleTime))
 
@@ -165,70 +196,93 @@ def dockEstimates(log):
     return t, freeError, cableError, dTheta
 
 
+def pitchErrorClosedForm(grade, levelled, t):
+    """
+    dTheta = pitchErrorClosedForm(grade, levelled, t) is the dock's pitch
+    error (rad) at times t, worked out from the grade's biases alone. It
+    starts at zero, from the true attitude. Then, with alpha = 1 - dt/tau and
+    n = t / dt samples:
+
+        unaided   b t
+        levelled  (atan(b_a / g) + b (tau - dt)) (1 - alpha^n)
+
+    Unaided, the accelerometer bias never enters the attitude. Levelled, the
+    error rises within a few tau to a floor the accelerometer mostly sets.
+    Both are exact for the discrete filter, not approximations - see
+    tests/test_levelling.py.
+    """
+    gyroBias, accelBias, _ = grade
+    b = gyroBias * DEG_PER_HOUR
+
+    if not levelled:
+        return b * t
+
+    alpha = 1.0 - sampleTime / complementaryTau
+    n = np.round(t / sampleTime)
+    floor = np.arctan(accelBias * MILLI_G / 9.81) \
+        + b * (complementaryTau - sampleTime)
+    return floor * (1 - alpha ** n)
+
+
+def cableErrorClosedForm(dTheta):
+    """
+    error = cableErrorClosedForm(dTheta) is the cable estimate's position
+    error for a pitch error dTheta: the chord 2L sin(dTheta/2).
+    """
+    return 2 * L * np.abs(np.sin(dTheta / 2))
+
+
 ###############################################################################
 # Figure 1 - eq (3) sensitivity, pure geometry
 ###############################################################################
 def figureSensitivity():
+    """
+    figureSensitivity() draws the geometry of eq (3): how a dock attitude
+    error becomes a dock position error, for several cable lengths, and the
+    attitude error each length can tolerate before the estimate leaves the
+    capture radius.
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 3.4))
+    Pure geometry, no simulation. The perturbation is applied in pitch, the
+    axis the study uses; roll gives exactly the same curve, since either
+    tilts a body-z cable by the same angle.
+
+    A second panel, showing that roll and pitch cost L*dtheta alike and that
+    yaw costs nothing at a vertical tether, was dropped (Jenia): a constant
+    and a sine are better stated in a sentence than plotted.
+    """
+    fig, ax = plt.subplots(figsize=(5.6, 3.9))
 
     level = np.array([0, 0, 0, 0, 0, 0], float)
-
-    # (a) error amplification by cable length
     attitudeError = np.linspace(0, 10, 200)         # deg
+
     for cableLength in cableLengths:
         reference = cableVector(level, cableLength)
         error = [np.linalg.norm(
-                    cableVector(np.array([0, 0, 0, a * D2R, 0, 0]), cableLength)
+                    cableVector(np.array([0, 0, 0, 0, a * D2R, 0]), cableLength)
                     - reference)
                  for a in attitudeError]
-        ax1.plot(attitudeError, error, label="L = %g m" % cableLength)
 
-    ax1.axhline(captureRadius, color="k", linestyle=":", linewidth=1)
-    ax1.annotate("capture radius %.1f m" % captureRadius,
-                 xy=(0.35, captureRadius), xytext=(0, 4),
-                 textcoords="offset points", fontsize=7)
-    ax1.set_xlabel("dock attitude error (deg)")
-    ax1.set_ylabel("dock position error (m)")
-    ax1.set_title("(a) eq (3): error is amplified by cable length")
-    ax1.legend()
-    ax1.grid(alpha=0.3)
+        # The attitude error this length tolerates, from 2L sin(eps/2) = r
+        tolerated = 2 * np.arcsin(captureRadius / (2 * cableLength)) / D2R
 
-    # (b) which attitude angle matters, as current slants the tether
-    slant = np.linspace(0, 60, 200)                 # deg, tether from vertical
-    oneDegree = 1.0 * D2R
+        line, = ax.plot(attitudeError, error,
+                        label="L = %g m  (%.1f deg)" % (cableLength, tolerated))
+        ax.plot(tolerated, captureRadius, "o", color=line.get_color(),
+                markersize=5, zorder=4)
 
-    # Roll and pitch both swing a body-z cable by L*dtheta whatever the slant,
-    # so their curves coincide exactly - drawn with different styles so that
-    # both remain visible.
-    styles = {3: dict(linestyle="-", linewidth=3, alpha=0.4),
-              4: dict(linestyle="--", linewidth=1.5),
-              5: dict(linestyle="-", linewidth=1.5)}
-
-    for axisIndex, name in ((3, "roll error"), (4, "pitch error"), (5, "yaw error")):
-        error = []
-        for s in slant:
-            nominal = np.array([0, 0, 0, 0, s * D2R, 0], float)
-            perturbed = nominal.copy()
-            perturbed[axisIndex] += oneDegree
-            error.append(np.linalg.norm(
-                cableVector(perturbed, L) - cableVector(nominal, L)))
-        ax2.plot(slant, error, label=name, **styles[axisIndex])
-
-    ax2.annotate("roll and pitch coincide: both swing\nthe cable by "
-                 r"$L\,\delta\theta$ at any slant",
-                 xy=(30, L * oneDegree), xytext=(-4, -28),
-                 textcoords="offset points", fontsize=7)
-    ax2.annotate("yaw does nothing until\ncurrent slants the tether",
-                 xy=(8, 0.02), xytext=(0, 0),
-                 textcoords="offset points", fontsize=7, color="C2")
-
-    ax2.set_ylim(bottom=-0.008)
-    ax2.set_xlabel("tether slant from vertical (deg)")
-    ax2.set_ylabel("dock position error (m)")
-    ax2.set_title("(b) 1 deg error in each angle, L = %g m" % L)
-    ax2.legend()
-    ax2.grid(alpha=0.3)
+    ax.axhline(captureRadius, color="k", linestyle=":", linewidth=1)
+    # Label at the right, clear of the markers on the left
+    ax.annotate("capture radius %.1f m" % captureRadius,
+                xy=(attitudeError[-1], captureRadius), xytext=(-2, 4),
+                textcoords="offset points", fontsize=7, ha="right")
+    ax.set_xlim(0, attitudeError[-1])
+    ax.set_ylim(bottom=0)
+    ax.set_xlabel("dock attitude error (deg)")
+    ax.set_ylabel("dock position error (m)")
+    ax.set_title("eq (3): error is amplified by cable length")
+    ax.legend(title="cable length (tolerable error)", fontsize=8,
+              title_fontsize=8)
+    ax.grid(alpha=0.3)
 
     fig.tight_layout()
     save(fig, "fig1_cableSensitivity")
@@ -238,31 +292,66 @@ def figureSensitivity():
 # Figure 2 - eq (3) in time, simulated
 ###############################################################################
 def figureErrorGrowth(runs):
+    """
+    figureErrorGrowth(runs) plots the cable estimate's error over time for
+    every grade, unaided (dashed) and levelled (solid), with the closed form
+    marked on each at intervals (markers rather than a line, so the curves'
+    own styles stay readable).
 
-    fig, ax = plt.subplots(figsize=(5.8, 3.6))
+    The axis spans twice the capture radius, the scale that matters for
+    docking. A curve that leaves it is marked where it does, with its value
+    at the end of the run.
+    """
+    fig, ax = plt.subplots(figsize=(6.4, 4.0))
+    top = 2.0 * captureRadius
+    markEvery = int(round(20.0 / sampleTime))      # a closed-form mark each 20 s
 
-    colours = ["C0", "C1", "C2"]
+    ax.axhspan(0, captureRadius, color="0.85", alpha=0.7)
+    ax.text(duration * 0.99, captureRadius, "capture radius %.1f m "
+            % captureRadius, ha="right", va="bottom", fontsize=7)
 
-    for (bias, _), colour in zip(gyroGrades, colours):
-        t, _, cableError, _ = runs[bias]
-        ax.plot(t, cableError, colour, label=gradeLabel(bias))
+    for grade, colour in zip(imuGrades, gradeColours):
+        for levelled, style in ((False, "--"), (True, "-")):
+            run = runs[grade[2]]["levelled" if levelled else "unaided"]
+            t, cableError = run["t"], run["cable"]
+            ax.plot(t, cableError, color=colour, linestyle=style)
 
-    # Closed form 2L sin(dtheta/2), overlaid on the worst grade to show the
-    # simulation reproduces the algebra
-    worstBias = gyroGrades[-1][0]
-    t, _, _, dTheta = runs[worstBias]
-    ax.plot(t, 2 * L * np.abs(np.sin(dTheta / 2)), "k--", linewidth=1,
-            label=r"closed form $2L\sin(\delta\theta/2)$")
+            marks = slice(0, None, markEvery)
+            ax.plot(t[marks], cableErrorClosedForm(
+                        pitchErrorClosedForm(grade, levelled, t))[marks],
+                    "o", color="k", markersize=3, markerfacecolor="none",
+                    markeredgewidth=0.7)
 
-    ax.axhline(captureRadius, color="k", linestyle=":", linewidth=1)
-    ax.annotate("capture radius %.1f m" % captureRadius,
-                xy=(duration * 0.62, captureRadius), xytext=(0, 4),
-                textcoords="offset points", fontsize=7)
+            if cableError.max() > top:
+                kOut = int(np.argmax(cableError > top))
+                ax.annotate("%s, unaided:\n%.1f m at %.0f s"
+                            % (grade[2], cableError[-1], t[-1]),
+                            xy=(t[kOut], top), xytext=(14, -22),
+                            textcoords="offset points", fontsize=7,
+                            color=colour,
+                            arrowprops=dict(arrowstyle="->", color=colour))
+
+    # A little below zero, so that errors of a few millimetres are not hidden
+    # under the axis line
+    ax.set_ylim(-0.02 * top, top)
+    ax.set_xlim(0, duration)
     ax.set_xlabel("time (s)")
     ax.set_ylabel("dock position error (m)")
     ax.set_title("cable pseudo-measurement, eq (3), L = %g m" % L)
-    ax.legend(loc="upper left")
     ax.grid(alpha=0.3)
+
+    handles = [Line2D([], [], color=colour, label=gradeLabel(grade))
+               for grade, colour in zip(imuGrades, gradeColours)]
+    handles += [
+        Line2D([], [], color="k", linestyle="--", label="unaided (gyro alone)"),
+        Line2D([], [], color="k",
+               label=r"levelled, complementary filter, $\tau$ = %g s"
+               % complementaryTau),
+        Line2D([], [], marker="o", color="k", linestyle="None", markersize=3,
+               markerfacecolor="none", markeredgewidth=0.7,
+               label=r"closed form, $2L\sin(\delta\theta/2)$"),
+    ]
+    ax.legend(handles=handles, loc="upper right", fontsize=7)
 
     fig.tight_layout()
     save(fig, "fig2_errorGrowth")
@@ -276,53 +365,75 @@ def save(fig, name):
     os.makedirs(figureDir, exist_ok=True)
     for extension in ("pdf", "png"):
         path = os.path.join(figureDir, "%s.%s" % (name, extension))
-        fig.savefig(path, bbox_inches="tight")
+        # No creation date in the PDF, so re-running a script that changes
+        # nothing leaves the file byte-identical and out of git status
+        metadata = {"CreationDate": None} if extension == "pdf" else None
+        fig.savefig(path, bbox_inches="tight", metadata=metadata)
     plt.close(fig)
     print("  wrote %s.pdf / .png" % name)
 
 
 def summaryTable(runs):
     """
-    summaryTable(runs) prints the numbers to quote in the proposal text.
+    summaryTable(runs) prints the numbers to quote in the proposal text, and
+    how far the simulation is from the closed form.
     """
     print()
-    print("Dock position error after a %.0f s approach, L = %g m"
-          % (duration, L))
-    print("%-30s %12s %14s %15s" % (
-        "gyro grade", "att err (deg)", "cable eq (3)", "free INS (*)"))
-    print("-" * 75)
-    for bias, _ in gyroGrades:
-        t, freeError, cableError, dTheta = (
-            runs[bias][k] for k in ("t", "free", "cable", "dTheta"))
-        print("%-30s %12.2f %11.3f m %13.1f m %s" % (
-            gradeLabel(bias), abs(dTheta[-1]) / D2R, cableError[-1],
-            freeError[-1],
-            "" if cableError[-1] > captureRadius else "  < capture radius"))
-    print("-" * 75)
+    print("Dock position error after a %.0f s approach, L = %g m, "
+          "cable estimate eq (3)" % (duration, L))
+    print("%-34s %19s %21s %19s" % (
+        "", "pitch error (deg)", "cable eq (3) (mm)", "free INS (*) (m)"))
+    print("%-34s %9s %9s %10s %10s %9s %9s" % (
+        "IMU grade", "unaided", "levelled", "unaided", "levelled",
+        "unaided", "levelled"))
+    print("-" * 97)
+    worstGap = 0.0
+    for grade in imuGrades:
+        u, v = runs[grade[2]]["unaided"], runs[grade[2]]["levelled"]
+        print("%-34s %9.3f %9.3f %10.1f %10.1f %9.1f %9.1f" % (
+            gradeLabel(grade),
+            abs(u["dTheta"][-1]) / D2R, abs(v["dTheta"][-1]) / D2R,
+            u["cable"][-1] * 1e3, v["cable"][-1] * 1e3,
+            u["free"][-1], v["free"][-1]))
+        for levelled, run in ((False, u), (True, v)):
+            closed = cableErrorClosedForm(
+                pitchErrorClosedForm(grade, levelled, run["t"]))
+            worstGap = max(worstGap, np.abs(run["cable"] - closed).max())
+    print("-" * 97)
+    print("capture radius %.0f mm. Largest gap between simulation and closed "
+          "form, over every run and sample: %.2g m."
+          % (captureRadius * 1e3, worstGap))
     print("(*) free inertial solution, for reference only - not plotted.")
-    print("    %.0f x the cable estimate at the MEMS grade."
-          % (runs[gyroGrades[1][0]]["free"][-1]
-             / runs[gyroGrades[1][0]]["cable"][-1]))
 
 
 ###############################################################################
 # Main program
 ###############################################################################
+def runAll():
+    """
+    runs = runAll() simulates every grade, unaided and levelled:
+    runs[name]["unaided" | "levelled"] = {"log", "t", "free", "cable",
+    "dTheta"}.
+    """
+    runs = {}
+    for grade in imuGrades:
+        runs[grade[2]] = {}
+        for mode in ("unaided", "levelled"):
+            log = runDock(grade, levelled=(mode == "levelled"))
+            t, freeError, cableError, dTheta = dockEstimates(log)
+            runs[grade[2]][mode] = {"log": log, "t": t, "free": freeError,
+                                    "cable": cableError, "dTheta": dTheta}
+            print("  %-34s %-9s done" % (gradeLabel(grade), mode))
+    return runs
+
+
 def main():
     print("Running dock simulations (%.0f s each)..." % duration)
-
-    runs = {}
-    for bias, _ in gyroGrades:
-        log = runDock(bias)
-        t, freeError, cableError, dTheta = dockEstimates(log)
-        runs[bias] = {"log": log, "t": t, "free": freeError,
-                      "cable": cableError, "dTheta": dTheta}
-        print("  %-30s done" % gradeLabel(bias))
+    runs = runAll()
 
     print("Writing figures...")
     figureSensitivity()
-    figureErrorGrowth({b: (r["t"], r["free"], r["cable"], r["dTheta"])
-                       for b, r in runs.items()})
+    figureErrorGrowth(runs)
 
     summaryTable(runs)
 
