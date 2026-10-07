@@ -210,10 +210,10 @@ Two scripts in `studies/`, both run directly, both writing into
 | script | outputs | purpose |
 |---|---|---|
 | `cableErrorBudget.py` | `fig1`, `fig2` (PDF + PNG), summary table | the Preliminary Results figures |
-| `dockScenario.py` | `fig4_dockScenario` (PDF + PNG), `anim_dockScenario.gif` | *watching* the same scenario, to understand it |
+| `dockScenario.py` | `fig4_dockScene`, `fig5_dockNavigation` (PDF + PNG), `anim_dockScenario.gif` | *watching* the same scenario, to understand it |
 
-The gaps in the numbering (no fig 3 or fig 5) are history, not missing
-files. The proposal numbers its own figures.
+The gap in the numbering (no fig 3) is history, not a missing file. The
+proposal numbers its own figures.
 
 They share one scene, defined by `runDock(grade, levelled)` in
 `cableErrorBudget.py`: a **300 s** run, the buoy and dock half-way along the
@@ -392,28 +392,28 @@ signs they would partly cancel, so adding is the worst case.
   that matters for docking. The consumer-unaided curve leaves it, so it is
   annotated with its end value. The floor sits slightly below zero so
   millimetre errors are not hidden under the axis line.
-- **fig4_dockScenario:** everything in one figure. Jenia asked for the
-  three per-grade fig 4s and fig 5 to be united.
-  - (a) The scene at the vehicle's closest pass, with a numbers box: each
-    run's error, `*` when outside the capture radius.
-  - (b) The close-up. All six estimates walk *along* the circle of radius
-    `L`, because eq (3) respects eq (4) by construction. Hollow markers are
-    unaided, filled are levelled.
-  - (c)–(e) The dock's x, depth and pitch against time, truth against
-    every estimate. Each axis spans ±2× the capture radius with the band
-    shaded. In pitch the band is `2·asin(r/2L)`, the pitch error that
-    reaches the capture radius. A curve that leaves the axis gets a note.
+- **fig4_dockScene:** (a) the scene at the vehicle's closest pass, with a
+  numbers box giving each run's error and `*` when it is outside the
+  capture radius; (b) the close-up, where all six estimates walk *along*
+  the circle of radius `L`, because eq (3) respects eq (4) by
+  construction. Hollow markers are unaided, filled are levelled. The GIF
+  is this figure animated, by the same `draw(k)`.
+- **fig5_dockNavigation:** (a) x, (b) depth, (c) pitch against time, truth
+  against every estimate. Each axis spans ±2× the capture radius with the
+  band shaded; in pitch the band is `2·asin(r/2L)`, the pitch error that
+  reaches the capture radius. A curve that leaves the axis gets a note, and
+  a cursor marks the moment fig 4 shows. Only x, depth and pitch appear,
+  because the biases leave y, roll and yaw exact.
 
-  Only x, depth and pitch appear, because the biases leave y, roll and yaw
-  exact.
-
-  The still figure is `draw(kPass, full=True)`, the whole run with a cursor
-  at the pass. The GIF is the same figure drawn by `draw(k)`, with the
-  histories growing up to the cursor.
+  These two were **one** figure (`fig4_dockScenario`) until Jenia's
+  supervisor asked for them apart (2026-09-30). Jenia had asked for them
+  united two weeks earlier, so do not merge them back without asking.
+  `commonData()`, `estimateHandles()` and `titleAndNote()` are shared, so
+  the scene and the histories still agree on colours, styles and wording.
 
   Log-scale error panels were dropped (Jenia: "we don't need the log plots
   at this point"). The cost: millimetre-level curves look flat, so the
-  numbers box carries them.
+  numbers box in fig 4 carries them.
 
 Plotting conventions, worth reusing:
 - Height (`−z`) goes on the vertical axis, with tick labels shown as
@@ -550,7 +550,8 @@ Open items in the draft:
   book, or possibly his tutorial paper
 - the new references (Fossen handbook, PythonVehicleSimulator, Mahony 2008)
   should be verified
-- fig 4 is too dense at page width, and needs a proposal version
+- the figures are small at page width, especially fig 4's numbers box;
+  a version with larger type may still be needed
 
 The draft calls the complementary-filter weight `γ`, not `α`, because the
 proposal already uses `α_k` for the robust EKF's adaptive factor. The code

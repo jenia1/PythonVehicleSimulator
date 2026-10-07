@@ -25,12 +25,13 @@ dockScenario.py:
 
     Outputs, in studies/figures/:
 
-      fig4_dockScenario      everything in one figure: (a) the scene and
-                             (b) a close-up of the buoy and dock, at the
-                             moment the vehicle passes the dock, and (c)-(e)
-                             the dock's true vs estimated x, depth and pitch
-                             over the whole run
-      anim_dockScenario.gif  the same figure in motion
+      fig4_dockScene         (a) the scene and (b) a close-up of the buoy
+                             and dock, at the moment the vehicle passes it
+      fig5_dockNavigation    (a)-(c) the dock's true vs estimated x, depth
+                             and pitch over the whole run
+      anim_dockScenario.gif  the scene figure in motion
+
+    The two were one figure until Jenia's supervisor asked for them apart.
 
 Usage:
 
@@ -119,50 +120,89 @@ def depthAxis(ax, step):
 
 
 ###############################################################################
-# Figure 4 - the scene, the close-up and the time histories, together
+# Pieces both figures use
 ###############################################################################
-def buildFigure(data):
+def commonData(data):
     """
-    fig, draw, kPass = buildFigure(data) lays out the figure, for
-    data[grade name][mode] = scenarioData(...) of every grade and mode.
+    c = commonData(data) collects what both figures need from
+    data[grade name][mode]: the time vector, the vehicle track, the fixed
+    buoy and dock positions, the vehicle's closest pass, and every run
+    paired with the colour and style it is drawn in.
 
-    draw(k, full=False) puts every moving element at sample k: the scene and
-    the close-up at that moment, and the time histories up to it. With
-    full=True the time histories cover the whole run instead, with a cursor
-    at k - the still figure. kPass is the vehicle's closest pass.
+    The vehicle, the buoy and the true dock are identical in every run -
+    only the dock's navigation unit differs - so they come from any one.
     """
-    # The vehicle, the buoy and the true dock are identical in every run -
-    # only the dock's navigation unit differs - so they come from any one.
     first = data[imuGrades[0][2]][modes[0]]
-    t = first["t"]
     vehicle, true = first["vehicle"], first["true"]
+    distance = np.linalg.norm(vehicle - true, axis=1)
 
-    xS, zS = first["source"][0, 0], first["source"][0, 2]   # buoy, fixed
-    xD, zD = true[0, 0], true[0, 2]                         # true dock, fixed
+    return {
+        "first": first, "t": first["t"], "vehicle": vehicle, "true": true,
+        "xS": first["source"][0, 0], "zS": first["source"][0, 2],
+        "xD": true[0, 0], "zD": true[0, 2],
+        "distance": distance, "kPass": int(distance.argmin()),
+        "runs": [(grade, gradeColour, mode, data[grade[2]][mode])
+                 for grade, gradeColour in zip(imuGrades, gradeColours)
+                 for mode in modes],
+    }
 
-    # Closest approach of the vehicle to the dock
-    vehicleDistance = np.linalg.norm(vehicle - true, axis=1)
-    kPass = int(vehicleDistance.argmin())
+
+def estimateHandles():
+    """the legend entries for the estimates: one per grade, one per mode"""
+    handles = [Line2D([], [], color=gradeColour, linewidth=2,
+                      label="dock estimate, eq (3): " + gradeLabel(grade))
+               for grade, gradeColour in zip(imuGrades, gradeColours)]
+    handles += [
+        Line2D([], [], color="0.3", linestyle="--", marker="o", markersize=7,
+               markerfacecolor="none", label="unaided: gyro alone"),
+        Line2D([], [], color="0.3", marker="o", markersize=5,
+               label=r"levelled: complementary filter, $\tau$ = %g s"
+                     % complementaryTau),
+    ]
+    return handles
+
+
+def titleAndNote(fig):
+    """the title and the footnote, the same on both figures"""
+    fig.suptitle(
+        "Dock position estimated through the cable, eq (3), from the "
+        "attitude its own navigation unit gives,\nfor three IMU grades - "
+        "black is the truth, which never moves", fontsize=11)
+    fig.text(0.5, 0.008,
+             "IMU grades from Groves' table of typical biases (consumer: one "
+             "decade past its lower bounds). The dock's INS starts from its "
+             "true attitude (alignment assumed perfect).\nIts gyro bias is about "
+             "the pitch axis and its accelerometer bias along x, so y, roll "
+             "and yaw stay exact. The vehicle and buoy have ideal IMUs.",
+             ha="center", va="bottom", fontsize=7, color="0.4")
+
+
+###############################################################################
+# Figure 4 - the scene and the close-up, the figure the animation draws
+###############################################################################
+def sceneFigure(data):
+    """
+    fig, draw, kPass = sceneFigure(data) lays out (a) the scene and (b) the
+    close-up at the buoy and dock.
+
+    draw(k) puts the vehicle and every dock estimate at sample k, so the
+    same figure serves as the still (drawn at the vehicle's closest pass,
+    kPass) and as the animation.
+    """
+    c = commonData(data)
+    t, vehicle, true, runs = c["t"], c["vehicle"], c["true"], c["runs"]
+    xS, zS, xD, zD = c["xS"], c["zS"], c["xD"], c["zD"]
+    kPass = c["kPass"]
 
     # Trails are drawn from every trailStride-th sample, not every sample
     trailIndex = np.arange(0, len(t), trailStride)
 
-    # Every estimate, as (grade, its colour, mode, its data)
-    runs = [(grade, gradeColour, mode, data[grade[2]][mode])
-            for grade, gradeColour in zip(imuGrades, gradeColours)
-            for mode in modes]
-
-    fig = plt.figure(figsize=(13, 9.8))
-    grid = fig.add_gridspec(2, 3, height_ratios=[1.15, 1], hspace=0.35,
-                            wspace=0.3, left=0.06, right=0.98, top=0.9,
-                            bottom=0.2)
-    # The top row is split on its own, so the close-up gets a wider share
-    top = grid[0, :].subgridspec(1, 2, width_ratios=[1.55, 1], wspace=0.15)
-    axScene = fig.add_subplot(top[0])
-    axZoom = fig.add_subplot(top[1])
-    axX = fig.add_subplot(grid[1, 0])
-    axDepth = fig.add_subplot(grid[1, 1], sharex=axX)
-    axPitch = fig.add_subplot(grid[1, 2], sharex=axX)
+    fig = plt.figure(figsize=(12.5, 5.4))
+    # The close-up gets the smaller share, but not a third: it is square-ish
+    grid = fig.add_gridspec(1, 2, width_ratios=[1.55, 1], wspace=0.18,
+                            left=0.06, right=0.98, top=0.85, bottom=0.27)
+    axScene = fig.add_subplot(grid[0])
+    axZoom = fig.add_subplot(grid[1])
 
     # Close-up window, in plot coordinates (x, height = -z)
     zoomX = (xS - zoomHalfWidth * L, xS + zoomHalfWidth * L)
@@ -259,70 +299,6 @@ def buildFigure(data):
                                markersize=10, alpha=0.75, zorder=4)
     axZoom.set_title("(b) close-up at the buoy and dock", fontsize=9)
 
-    # --- (c)-(e) the time histories ---
-    # Each panel: truth, the estimate of every run, a shaded band for the
-    # capture radius, and an axis twice as wide as the band, the scale that
-    # matters for docking. An estimate that leaves the axis is marked where
-    # it does.
-    panels = [
-        dict(ax=axX, title="(c) x: true vs estimated",
-             ylabel="x relative to the dock (m)",
-             truth=true[:, 0] - xD, centre=0.0, band=captureRadius,
-             estimate=lambda d: d["cable"][:, 0] - xD),
-        dict(ax=axDepth, title="(d) depth: true vs estimated",
-             ylabel="depth z (m)",
-             truth=true[:, 2], centre=zD, band=captureRadius,
-             estimate=lambda d: d["cable"][:, 2]),
-        dict(ax=axPitch, title="(e) pitch: true vs estimated",
-             ylabel="pitch (deg)",
-             truth=first["thetaTrue"] / D2R, centre=0.0,
-             band=capturePitch / D2R,
-             estimate=lambda d: d["thetaEst"] / D2R),
-    ]
-
-    for panel in panels:
-        ax, centre, band = panel["ax"], panel["centre"], panel["band"]
-        low, high = centre - 2 * band, centre + 2 * band
-        inverted = ax is axDepth        # deeper is lower on the page
-
-        ax.axhspan(centre - band, centre + band, color="0.85", alpha=0.7)
-        panel["truthLine"], = ax.plot([], [], color=colour["true"],
-                                      linewidth=2.5)
-
-        panel["lines"], panel["notes"] = [], []
-        for grade, gradeColour, mode, d in runs:
-            y = panel["estimate"](d)
-            line, = ax.plot([], [], color=gradeColour,
-                            linestyle=lineStyle[mode])
-            panel["lines"].append((line, y))
-
-            outside = (y < low) | (y > high)
-            if outside.any():
-                kOut = int(np.argmax(outside))
-                edge = high if y[kOut] > high else low
-                # The note goes inside the axis, below or above the edge
-                # where the curve leaves - on the page, not in data values
-                atTop = (edge == high) != inverted
-                note = ax.annotate(
-                    "%s, %s:\noff the axis" % (grade[2], mode),
-                    xy=(t[kOut], edge), xytext=(14, -22 if atTop else 22),
-                    textcoords="offset points", fontsize=7, color=gradeColour,
-                    va="center", arrowprops=dict(arrowstyle="->",
-                                                 color=gradeColour))
-                panel["notes"].append((note, kOut))
-
-        panel["cursor"] = ax.axvline(0, color="0.5", linewidth=0.8)
-
-        ax.set_xlim(0, t[-1])
-        ax.set_ylim(low, high)
-        if inverted:
-            ax.invert_yaxis()
-        ax.set_xlabel("time (s)")
-        ax.set_ylabel(panel["ylabel"])
-        ax.set_title(panel["title"], fontsize=9)
-        ax.grid(alpha=0.3)
-
-    # --- one legend for every panel ---
     handles = [
         Line2D([], [], marker="o", color=colour["buoy"], linestyle="None",
                markersize=8, label="buoy: source, position known"),
@@ -332,39 +308,16 @@ def buildFigure(data):
                label="vehicle"),
         Patch(facecolor="0.85", edgecolor="0.5", linestyle="--",
               label=r"reachable region, eq (4): $\|p_D - p_S\| \leq L$"),
-        Patch(facecolor="0.85", edgecolor="k", linestyle=":",
-              label="capture radius %.1f m (in pitch: the error that "
-                    "reaches it)" % captureRadius),
-    ]
-    handles += [Line2D([], [], color=gradeColour, linewidth=2,
-                       label="dock estimate, eq (3): " + gradeLabel(grade))
-                for grade, gradeColour in zip(imuGrades, gradeColours)]
-    handles += [
-        Line2D([], [], color="0.3", linestyle="--", marker="o", markersize=7,
-               markerfacecolor="none", label="unaided: gyro alone"),
-        Line2D([], [], color="0.3", marker="o", markersize=5,
-               label=r"levelled: complementary filter, $\tau$ = %g s"
-                     % complementaryTau),
-    ]
+        Line2D([], [], color="k", linestyle=":",
+               label="capture radius %.1f m" % captureRadius),
+    ] + estimateHandles()
     fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=8,
-               frameon=False, bbox_to_anchor=(0.5, 0.035))
+               frameon=False, bbox_to_anchor=(0.5, 0.055))
+    titleAndNote(fig)
 
-    fig.suptitle(
-        "Dock position estimated through the cable, eq (3), from the "
-        "attitude its own navigation unit gives,\nfor three IMU grades - "
-        "black is the truth, which never moves", fontsize=11)
-    fig.text(0.5, 0.008,
-             "IMU grades from Groves' table of typical biases (consumer: one "
-             "decade past its lower bounds). The dock's INS starts from its "
-             "true attitude (alignment assumed perfect).\nIts gyro bias is about "
-             "the pitch axis and its accelerometer bias along x, so y, roll "
-             "and yaw stay exact. The vehicle and buoy have ideal IMUs.",
-             ha="center", va="bottom", fontsize=7, color="0.4")
-
-    def draw(k, full=False):
-        """draw(k, full) puts every moving element at sample k"""
+    def draw(k):
+        """draw(k) puts every moving element at sample k"""
         trail = trailIndex[trailIndex <= k]
-        upTo = len(t) if full else k + 1
 
         # (a) the scene
         vehicleTrail.set_data(vehicle[trail, 0], -vehicle[trail, 2])
@@ -379,18 +332,9 @@ def buildFigure(data):
             mark.set_data([est[k, 0]], [-est[k, 2]])
         vehicleZoom.set_data([vehicle[k, 0]], [-vehicle[k, 2]])
 
-        # (c)-(e)
-        for panel in panels:
-            panel["truthLine"].set_data(t[:upTo], panel["truth"][:upTo])
-            for line, y in panel["lines"]:
-                line.set_data(t[:upTo], y[:upTo])
-            panel["cursor"].set_xdata([t[k], t[k]])
-            for note, kOut in panel["notes"]:
-                note.set_visible(full or kOut <= k)
-
         # The numbers, in the scene panel
         rows = ["t = %3.0f s, vehicle to dock %5.1f m"
-                % (t[k], vehicleDistance[k]),
+                % (t[k], c["distance"][k]),
                 "",
                 "cable estimate off by   %9s %9s" % modes]
         for grade in imuGrades:
@@ -406,6 +350,98 @@ def buildFigure(data):
         sceneText.set_text("\n".join(rows))
 
     return fig, draw, kPass
+
+
+###############################################################################
+# Figure 5 - the time histories
+###############################################################################
+def navigationFigure(data):
+    """
+    fig = navigationFigure(data) plots the dock's x, depth and pitch over the
+    whole run: the truth against every grade's estimate, unaided and levelled.
+
+    Each panel: a shaded band for the capture radius and an axis twice as
+    wide as the band, the scale that matters for docking. An estimate that
+    leaves the axis is marked where it does. Only x, depth and pitch appear,
+    because the biases leave y, roll and yaw exact.
+
+    A cursor marks the moment of the scene figure, the vehicle's closest pass.
+    """
+    c = commonData(data)
+    t, true, runs, kPass = c["t"], c["true"], c["runs"], c["kPass"]
+
+    fig, axes = plt.subplots(1, 3, figsize=(11.5, 4.6), sharex=True)
+    fig.subplots_adjust(left=0.07, right=0.98, top=0.84, bottom=0.30,
+                        wspace=0.3)
+    axX, axDepth, axPitch = axes
+
+    panels = [
+        dict(ax=axX, title="(a) x: true vs estimated",
+             ylabel="x relative to the dock (m)",
+             truth=true[:, 0] - c["xD"], centre=0.0, band=captureRadius,
+             estimate=lambda d: d["cable"][:, 0] - c["xD"]),
+        dict(ax=axDepth, title="(b) depth: true vs estimated",
+             ylabel="depth z (m)",
+             truth=true[:, 2], centre=c["zD"], band=captureRadius,
+             estimate=lambda d: d["cable"][:, 2]),
+        dict(ax=axPitch, title="(c) pitch: true vs estimated",
+             ylabel="pitch (deg)",
+             truth=c["first"]["thetaTrue"] / D2R, centre=0.0,
+             band=capturePitch / D2R,
+             estimate=lambda d: d["thetaEst"] / D2R),
+    ]
+
+    for panel in panels:
+        ax, centre, band = panel["ax"], panel["centre"], panel["band"]
+        low, high = centre - 2 * band, centre + 2 * band
+        inverted = ax is axDepth        # deeper is lower on the page
+
+        ax.axhspan(centre - band, centre + band, color="0.85", alpha=0.7)
+        ax.plot(t, panel["truth"], color=colour["true"], linewidth=2.5)
+
+        for grade, gradeColour, mode, d in runs:
+            y = panel["estimate"](d)
+            ax.plot(t, y, color=gradeColour, linestyle=lineStyle[mode])
+
+            outside = (y < low) | (y > high)
+            if outside.any():
+                kOut = int(np.argmax(outside))
+                edge = high if y[kOut] > high else low
+                # The note goes inside the axis, below or above the edge
+                # where the curve leaves - on the page, not in data values
+                atTop = (edge == high) != inverted
+                ax.annotate(
+                    "%s, %s:\noff the axis" % (grade[2], mode),
+                    xy=(t[kOut], edge), xytext=(14, -22 if atTop else 22),
+                    textcoords="offset points", fontsize=7, color=gradeColour,
+                    va="center", arrowprops=dict(arrowstyle="->",
+                                                 color=gradeColour))
+
+        ax.axvline(t[kPass], color="0.5", linewidth=0.8)
+
+        ax.set_xlim(0, t[-1])
+        ax.set_ylim(low, high)
+        if inverted:
+            ax.invert_yaxis()
+        ax.set_xlabel("time (s)")
+        ax.set_ylabel(panel["ylabel"])
+        ax.set_title(panel["title"], fontsize=9)
+        ax.grid(alpha=0.3)
+
+    handles = [
+        Line2D([], [], color=colour["true"], linewidth=2.5,
+               label="true dock (never moves)"),
+        Patch(facecolor="0.85",
+              label="capture radius %.1f m (in pitch: the error that "
+                    "reaches it)" % captureRadius),
+        Line2D([], [], color="0.5", linewidth=0.8,
+               label="the vehicle passes the dock, t = %.0f s" % t[kPass]),
+    ] + estimateHandles()
+    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=8,
+               frameon=False, bbox_to_anchor=(0.5, 0.045))
+    titleAndNote(fig)
+
+    return fig
 
 
 def animate(fig, draw, nSamples):
@@ -435,15 +471,16 @@ def main():
                        for mode in modes}
             for grade in imuGrades}
 
-    fig, draw, kPass = buildFigure(data)
+    fig, draw, kPass = sceneFigure(data)
 
     print("Animating...")
     animate(fig, draw, len(data[imuGrades[0][2]][modes[0]]["t"]))
 
-    # The still figure: the scene at the vehicle's closest pass, above the
-    # whole run
-    draw(kPass, full=True)
-    save(fig, "fig4_dockScenario")
+    # The still scene: the moment the vehicle passes the dock
+    draw(kPass)
+    save(fig, "fig4_dockScene")
+
+    save(navigationFigure(data), "fig5_dockNavigation")
 
 
 if __name__ == "__main__":
