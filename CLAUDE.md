@@ -393,11 +393,17 @@ signs they would partly cancel, so adding is the worst case.
   annotated with its end value. The floor sits slightly below zero so
   millimetre errors are not hidden under the axis line.
 - **fig4_dockScene:** (a) the scene at the vehicle's closest pass, with a
-  numbers box giving each run's error and `*` when it is outside the
-  capture radius; (b) the close-up, where all six estimates walk *along*
-  the circle of radius `L`, because eq (3) respects eq (4) by
-  construction. Hollow markers are unaided, filled are levelled. The GIF
-  is this figure animated, by the same `draw(k)`.
+  box of each run's error at that moment; (b) the close-up, where all six
+  estimates walk *along* the circle of radius `L`, because eq (3) respects
+  eq (4) by construction. Hollow markers are unaided, filled are levelled.
+
+  **The box is a legend, not a text box** (Jenia, 2026-10-19). Each row
+  carries the grade's coloured line beside its two numbers, so the box is
+  also the colour key and the grades leave the figure legend at the bottom;
+  only the grey mode markers stay there. The first row is the column
+  header, carried by an invisible handle so that it lines up, and
+  `_legend_box.align = "left"` keeps the title left-aligned with the rows.
+  `draw(k)` fills the legend's texts, so the same box animates.
 - **fig5_dockNavigation:** (a) x, (b) depth, (c) pitch against time, truth
   against every estimate. Each axis spans ±2× the capture radius with the
   band shaded; in pitch the band is `2·asin(r/2L)`, the pitch error that
@@ -408,12 +414,58 @@ signs they would partly cancel, so adding is the worst case.
   These two were **one** figure (`fig4_dockScenario`) until Jenia's
   supervisor asked for them apart (2026-09-30). Jenia had asked for them
   united two weeks earlier, so do not merge them back without asking.
-  `commonData()`, `estimateHandles()` and `titleAndNote()` are shared, so
-  the scene and the histories still agree on colours, styles and wording.
+  `commonData()`, `gradeHandles()`, `modeHandles()` and `figureTitle()` are
+  shared, so the scene and the histories still agree on colours, styles and
+  wording.
 
   Log-scale error panels were dropped (Jenia: "we don't need the log plots
-  at this point"). The cost: millimetre-level curves look flat, so the
-  numbers box in fig 4 carries them.
+  at this point").
+
+  Its bottom legend is wider than its canvas, so `bbox_inches="tight"`
+  saves it 13.5 in wide rather than 12.5 and the panels sit in the middle
+  93%. Harmless while it is not in the proposal; shrink the legend before
+  printing it.
+
+- **Readable type, V4 proportions** (2026-10-19, the supervisor: "text in
+  this figure is too small. increase font size and reduce the amount of
+  text"). What a label measures on the page is
+  `font pt x printed width / canvas width`, and nothing else. Both figures
+  are drawn at 12.5 in; the proposal now prints fig 4 at 6.5 in (see **The
+  page was the real limit** above), so the page shows it at 52%.
+  `plotStyle` sets a 15 pt base font, which arrives as about 8 pt, the size
+  of the caption beside it; `insideSize` = 12 pt is for labels drawn inside
+  a panel, and the box of numbers is 13 pt monospace.
+
+  Two settings were tried and rejected on the way, both worth not
+  repeating:
+
+  - **A smaller canvas** — 7.5 in with a 13 pt font. It printed at exactly
+    the same size, but Jenia: "it now looks small and unimpressive", since
+    the figure is also read on screen at its own size. Raise the font, keep
+    the canvas.
+  - **20 pt type**, which prints at 10.5 pt, bigger than the body text. It
+    forced taller canvases (6.4 and 6.2 in) to make room, left the panels
+    narrow, and grew the box of numbers until it nearly touched the axes
+    around it — Jenia: "i dont like that the table inside almost toching
+    the plot. can you make thouse plot the original size the way the were
+    in V4".
+
+  So the panels are back to the proportions of the figure in the proposal's
+  V4: canvas 12.5 x 5.6 in, `width_ratios` 1.55:1, `wspace` 0.18,
+  `zoomHalfWidth` 1.4. The one piece kept from the tall version is
+  `set_anchor("N")` on the close-up, which keeps its top edge level with
+  the scene's instead of floating in the middle of its cell. The box of
+  numbers also carries `borderaxespad` so that it never sits against the
+  frame.
+
+  The room for that came from the page, not from the figure: printing at
+  6.5 in rather than 4.8 means 15 pt reads as well as 20 pt did before.
+
+  Text was cut to match: the explanatory note under the figures is gone,
+  the title is one short line, legend labels are the grade's numbers alone
+  ("consumer, 1000 deg/hr, 30 mg"), panel titles are short, and the
+  close-up has three x ticks rather than seven. What the figures no longer
+  say is in the proposal's captions and text.
 
 Plotting conventions, worth reusing:
 - Height (`−z`) goes on the vertical axis, with tick labels shown as
@@ -426,6 +478,32 @@ Plotting conventions, worth reusing:
 - `save()` writes PDFs without a creation date. An unchanged figure then
   stays byte-identical on a re-run and stays out of `git status` (it once
   showed fig 1 and fig 2 as modified when nothing had changed).
+- **Check a figure at the size it is printed, not at the size it is drawn.**
+  These are drawn at 12.5 in and printed at 4.8 in, so a 9 pt label arrives
+  as 3.5 pt. Render the proposal page and look at it before calling a
+  figure done.
+- **The page was the real limit, not the figure** (2026-10-19). After the
+  type grew, Jenia still saw little change on the page, and the measurement
+  says why: `Proposel.tex` is a plain `article` with default margins, so the
+  text block is 345 pt = 4.79 in on an 8.5 in page — 1.85 in of margin on
+  each side, 44% of the paper. `width=\textwidth` therefore pinned fig 4 at
+  4.79 in both before and after; only its height could grow (2.15 in → 2.47
+  in, the taller canvas). The type did get bigger, from about 3.6 pt to 7.8
+  pt printed, but the plot boxes could not.
+
+  The fix is in the proposal, not in matplotlib: fig 4 is now included as
+
+  ```latex
+  \makebox[\textwidth][c]{\includegraphics[width=1.35\textwidth]{figures/fig4_dockScene.pdf}}
+  ```
+
+  which centres an oversized graphic on the text block and lets it run into
+  the margins, 6.5 in wide with 1 in to spare on each side: +35% linear,
+  +82% in area, and the labels land at 10.5 pt, the size of the body text.
+  Nothing else on the page moves. The alternative, `geometry` with 1 in
+  margins, would enlarge every figure and the tables too, but it repaginates
+  the whole proposal and sets the lines to about 95 characters — worth
+  raising with Jenia if the department does not prescribe the margins.
 
 ### The complementary filter and coarse alignment
 
@@ -550,8 +628,10 @@ Open items in the draft:
   book, or possibly his tutorial paper
 - the new references (Fossen handbook, PythonVehicleSimulator, Mahony 2008)
   should be verified
-- the figures are small at page width, especially fig 4's numbers box;
-  a version with larger type may still be needed
+- fig 1 and fig 2 are still drawn in the old small-font style (9 pt on a
+  6 in canvas) and are included at 0.65 and 0.75 `\textwidth`, so their
+  labels print at about 5 pt against fig 4's 10.5; they need the same
+  `plotStyle` treatment and the full width
 
 The draft calls the complementary-filter weight `γ`, not `α`, because the
 proposal already uses `α_k` for the robust EKF's adaptive factor. The code

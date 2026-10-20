@@ -84,6 +84,32 @@ lineStyle = {"unaided": "--", "levelled": "-"}
 # from 2L sin(dtheta/2) = captureRadius. It is the pitch panel's shaded band.
 capturePitch = 2 * np.arcsin(captureRadius / (2 * L))
 
+# These figures are drawn at 12.5 in and printed at about 6.5 in: the
+# proposal includes them wider than its text block, since article's default
+# margins would otherwise hold them to 4.8 in. The page therefore shows them
+# at 52%, and 15 pt here arrives as about 8 pt, the size of the caption
+# beside it (Jenia's supervisor, 2026-10-19: "text in this figure is too
+# small. increase font size and reduce the amount of text").
+#
+# 20 pt was tried, which prints at 10.5 pt, larger than the body text. It
+# left the plots cramped and the box of numbers nearly touching the axes,
+# so the type came back down and the panels returned to the proportions of
+# the version in the proposal's V4 (Jenia, 2026-10-19).
+plotStyle = {
+    "font.size": 15,
+    "axes.titlesize": 15,
+    "axes.labelsize": 15,
+    "legend.fontsize": 14,
+    "xtick.labelsize": 14,
+    "ytick.labelsize": 14,
+    "lines.linewidth": 2.0,
+}
+insideSize = 12                 # labels drawn inside a panel
+
+# This script's figures only: cableErrorBudget.py keeps its own smaller style
+# for fig 1 and fig 2, which are printed at a smaller size.
+plt.rcParams.update(plotStyle)
+
 
 ###############################################################################
 # Data
@@ -147,34 +173,34 @@ def commonData(data):
     }
 
 
-def estimateHandles():
-    """the legend entries for the estimates: one per grade, one per mode"""
-    handles = [Line2D([], [], color=gradeColour, linewidth=2,
-                      label="dock estimate, eq (3): " + gradeLabel(grade))
-               for grade, gradeColour in zip(imuGrades, gradeColours)]
-    handles += [
-        Line2D([], [], color="0.3", linestyle="--", marker="o", markersize=7,
-               markerfacecolor="none", label="unaided: gyro alone"),
-        Line2D([], [], color="0.3", marker="o", markersize=5,
-               label=r"levelled: complementary filter, $\tau$ = %g s"
-                     % complementaryTau),
+def gradeHandles():
+    """one legend entry per IMU grade, labelled by its numbers alone"""
+    return [Line2D([], [], color=gradeColour, linewidth=3,
+                   label=gradeLabel(grade))
+            for grade, gradeColour in zip(imuGrades, gradeColours)]
+
+
+def modeHandles():
+    """
+    the two attitude sources, in grey: the colour belongs to the grade, the
+    line style and the marker to the mode
+    """
+    return [
+        Line2D([], [], color="0.3", linestyle="--", marker="o", markersize=9,
+               markerfacecolor="none", label="unaided"),
+        Line2D([], [], color="0.3", marker="o", markersize=7,
+               label=r"levelled, $\tau$ = %g s" % complementaryTau),
     ]
-    return handles
 
 
-def titleAndNote(fig):
-    """the title and the footnote, the same on both figures"""
-    fig.suptitle(
-        "Dock position estimated through the cable, eq (3), from the "
-        "attitude its own navigation unit gives,\nfor three IMU grades - "
-        "black is the truth, which never moves", fontsize=11)
-    fig.text(0.5, 0.008,
-             "IMU grades from Groves' table of typical biases (consumer: one "
-             "decade past its lower bounds). The dock's INS starts from its "
-             "true attitude (alignment assumed perfect).\nIts gyro bias is about "
-             "the pitch axis and its accelerometer bias along x, so y, roll "
-             "and yaw stay exact. The vehicle and buoy have ideal IMUs.",
-             ha="center", va="bottom", fontsize=7, color="0.4")
+def figureTitle(fig):
+    """
+    the title, the same on both figures. The explanatory note that used to
+    sit under them is gone: at the size these are printed it was unreadable,
+    and the proposal's text and captions say the same thing at full size.
+    """
+    fig.suptitle("Dock position estimated through the cable, eq (3) "
+                 "for three IMU grades", fontsize=17)
 
 
 ###############################################################################
@@ -197,10 +223,10 @@ def sceneFigure(data):
     # Trails are drawn from every trailStride-th sample, not every sample
     trailIndex = np.arange(0, len(t), trailStride)
 
-    fig = plt.figure(figsize=(12.5, 5.4))
+    fig = plt.figure(figsize=(12.5, 5.6))
     # The close-up gets the smaller share, but not a third: it is square-ish
     grid = fig.add_gridspec(1, 2, width_ratios=[1.55, 1], wspace=0.18,
-                            left=0.06, right=0.98, top=0.85, bottom=0.27)
+                            left=0.06, right=0.98, top=0.87, bottom=0.21)
     axScene = fig.add_subplot(grid[0])
     axZoom = fig.add_subplot(grid[1])
 
@@ -216,16 +242,19 @@ def sceneFigure(data):
     depthAxis(axScene, 10)
 
     axScene.axhline(0, color="grey", linestyle="--", linewidth=1)
-    axScene.text(0.01 * xEnd, 1, "surface", fontsize=7, color="grey")
+    axScene.text(0.01 * xEnd, 1.5, "surface", fontsize=insideSize, color="grey")
     axScene.plot(xS, -zS, "o", color=colour["buoy"], markersize=8, zorder=5)
     axScene.plot([xS, xD], [-zS, -zD], color=colour["true"], linewidth=1)
     axScene.plot(xD, -zD, "s", color=colour["true"], markersize=7, zorder=5)
     axScene.add_patch(Rectangle((zoomX[0], zoomY[0]),
                                 zoomX[1] - zoomX[0], zoomY[1] - zoomY[0],
                                 fill=False, edgecolor="grey", linewidth=1))
-    axScene.annotate("close-up (b)", xy=(zoomX[1], zoomY[0]),
-                     xytext=(8, -14), textcoords="offset points",
-                     fontsize=7, color="grey")
+    # Beside the close-up rectangle, clear of the surface line above it and
+    # of the box of numbers below
+    axScene.annotate("close-up (b)", xy=(zoomX[0], -0.5 * (zS + zD)),
+                     xytext=(-10, 0), textcoords="offset points",
+                     ha="right", va="center", fontsize=insideSize,
+                     color="grey")
 
     # The vehicle is drawn beneath the buoy and dock markers, so that it does
     # not hide the dock at the moment it passes it
@@ -233,20 +262,29 @@ def sceneFigure(data):
     vehicleMark, = axScene.plot([], [], ">", color=colour["vehicle"],
                                 markersize=9, zorder=4)
 
-    # The numbers at sample k, in the empty water below the vehicle's track
-    sceneText = axScene.text(
-        0.99, 0.04, "", transform=axScene.transAxes, ha="right", va="bottom",
-        fontsize=8, family="monospace",
-        bbox=dict(facecolor="white", edgecolor="grey", alpha=0.9))
+    # The numbers at sample k, in the empty water below the vehicle's track.
+    # It is a legend rather than a plain text box, so the coloured line beside
+    # each row says which grade it is: the figure then needs no second place
+    # to name the colours. The first row is the column header, carried by an
+    # invisible handle so that it lines up with the rows under it.
+    blank = Line2D([], [], linestyle="None")
+    numberLegend = axScene.legend(
+        handles=[blank] + gradeHandles(), labels=[""] * (1 + len(imuGrades)),
+        loc="lower right", handlelength=1.6, labelspacing=0.3, borderpad=0.6,
+        borderaxespad=0.9, prop={"family": "monospace", "size": 13})
+    numberLegend.get_title().set_fontfamily("monospace")
+    numberLegend.get_title().set_fontsize(13)
+    numberLegend._legend_box.align = "left"
 
     axScene.set_xlabel("x, distance along the track (m)")
-    axScene.set_title(
-        "(a) the scene: the vehicle holds the dock's depth and passes it at "
-        "t = %.0f s\n(it has no sensing of the dock yet; it gives the scale)"
-        % t[kPass], fontsize=9)
+    axScene.set_title("(a) the scene: the AUV passes the dock at t = %.0f s"
+                      % t[kPass], fontsize=14)
 
     # --- (b) the close-up ---
+    # Equal aspect shrinks the axes inside its cell; anchoring it north keeps
+    # its top edge level with the scene panel's
     axZoom.set_aspect("equal")
+    axZoom.set_anchor("N")
     axZoom.set_xlim(*zoomX)
     axZoom.set_ylim(*zoomY)
     depthAxis(axZoom, 5)
@@ -254,7 +292,7 @@ def sceneFigure(data):
     # Ticks at whole multiples of 5 m from the buoy, rather than wherever the
     # absolute track position happens to put them
     axZoom.xaxis.set_major_locator(
-        FixedLocator(xS + np.arange(-15, 16, 5)))
+        FixedLocator(xS + np.arange(-10, 11, 10)))
     axZoom.xaxis.set_major_formatter(
         FuncFormatter(lambda v, pos: "%+.0f" % (v - xS)
                       if abs(v - xS) > 0.5 else "0"))
@@ -271,7 +309,7 @@ def sceneFigure(data):
                                    zoomX[1] - zoomX[0], 0 - zoomY[0],
                                    transform=axZoom.transData))
     axZoom.text(xS - 0.72 * L, -zS - 0.35 * L, "reachable\nregion, eq (4)",
-                fontsize=7, color="0.35", ha="center")
+                fontsize=insideSize, color="0.35", ha="center")
 
     axZoom.plot([xS, xD], [-zS, -zD], color=colour["true"], linewidth=2)
     axZoom.plot(xS, -zS, "o", color=colour["buoy"], markersize=9, zorder=5)
@@ -297,23 +335,19 @@ def sceneFigure(data):
 
     vehicleZoom, = axZoom.plot([], [], ">", color=colour["vehicle"],
                                markersize=10, alpha=0.75, zorder=4)
-    axZoom.set_title("(b) close-up at the buoy and dock", fontsize=9)
+    axZoom.set_title("(b) close-up at the buoy and dock", fontsize=14)
 
     handles = [
         Line2D([], [], marker="o", color=colour["buoy"], linestyle="None",
-               markersize=8, label="buoy: source, position known"),
+               markersize=10, label="source"),
         Line2D([], [], marker="s", color=colour["true"], linewidth=2,
-               markersize=7, label="true dock and cable (never moves)"),
-        Line2D([], [], marker=">", color=colour["vehicle"], markersize=8,
+               markersize=9, label="true dock"),
+        Line2D([], [], marker=">", color=colour["vehicle"], markersize=10,
                label="vehicle"),
-        Patch(facecolor="0.85", edgecolor="0.5", linestyle="--",
-              label=r"reachable region, eq (4): $\|p_D - p_S\| \leq L$"),
-        Line2D([], [], color="k", linestyle=":",
-               label="capture radius %.1f m" % captureRadius),
-    ] + estimateHandles()
-    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=8,
-               frameon=False, bbox_to_anchor=(0.5, 0.055))
-    titleAndNote(fig)
+    ] + modeHandles()
+    fig.legend(handles=handles, loc="lower center", ncol=5,
+               frameon=False, bbox_to_anchor=(0.5, 0.0))
+    figureTitle(fig)
 
     def draw(k):
         """draw(k) puts every moving element at sample k"""
@@ -332,22 +366,19 @@ def sceneFigure(data):
             mark.set_data([est[k, 0]], [-est[k, 2]])
         vehicleZoom.set_data([vehicle[k, 0]], [-vehicle[k, 2]])
 
-        # The numbers, in the scene panel
-        rows = ["t = %3.0f s, vehicle to dock %5.1f m"
-                % (t[k], c["distance"][k]),
-                "",
-                "cable estimate off by   %9s %9s" % modes]
-        for grade in imuGrades:
+        # The numbers, in the legend inside the scene panel
+        numberLegend.set_title("t = %3.0f s, error (m)" % t[k])
+        texts = numberLegend.get_texts()
+        texts[0].set_text("%-12s %8s %8s" % ("", "unaided", "levelled"))
+        for text, grade in zip(texts[1:], imuGrades):
             cells = []
             for mode in modes:
                 error = np.linalg.norm(data[grade[2]][mode]["cable"][k]
                                        - true[k])
-                cells.append("%7.3f m%s" % (error,
-                                            "*" if error > captureRadius
-                                            else " "))
-            rows.append("%-22s %s %s" % (grade[2], cells[0], cells[1]))
-        rows.append("* outside the %.1f m capture radius" % captureRadius)
-        sceneText.set_text("\n".join(rows))
+                cells.append("%7.3f%s" % (error,
+                                          "*" if error > captureRadius
+                                          else " "))
+            text.set_text("%-12s %8s %8s" % (grade[2], cells[0], cells[1]))
 
     return fig, draw, kPass
 
@@ -370,22 +401,22 @@ def navigationFigure(data):
     c = commonData(data)
     t, true, runs, kPass = c["t"], c["true"], c["runs"], c["kPass"]
 
-    fig, axes = plt.subplots(1, 3, figsize=(11.5, 4.6), sharex=True)
-    fig.subplots_adjust(left=0.07, right=0.98, top=0.84, bottom=0.30,
-                        wspace=0.3)
+    fig, axes = plt.subplots(1, 3, figsize=(12.5, 5.8), sharex=True)
+    fig.subplots_adjust(left=0.07, right=0.98, top=0.87, bottom=0.24,
+                        wspace=0.34)
     axX, axDepth, axPitch = axes
 
     panels = [
-        dict(ax=axX, title="(a) x: true vs estimated",
-             ylabel="x relative to the dock (m)",
+        dict(ax=axX, title="(a) x",
+             ylabel=r"$x - x_D$ (m)", ystep=0.5,
              truth=true[:, 0] - c["xD"], centre=0.0, band=captureRadius,
              estimate=lambda d: d["cable"][:, 0] - c["xD"]),
-        dict(ax=axDepth, title="(b) depth: true vs estimated",
-             ylabel="depth z (m)",
+        dict(ax=axDepth, title="(b) depth",
+             ylabel="depth z (m)", ystep=0.5,
              truth=true[:, 2], centre=c["zD"], band=captureRadius,
              estimate=lambda d: d["cable"][:, 2]),
-        dict(ax=axPitch, title="(c) pitch: true vs estimated",
-             ylabel="pitch (deg)",
+        dict(ax=axPitch, title="(c) pitch",
+             ylabel="pitch (deg)", ystep=2.0,
              truth=c["first"]["thetaTrue"] / D2R, centre=0.0,
              band=capturePitch / D2R,
              estimate=lambda d: d["thetaEst"] / D2R),
@@ -411,9 +442,10 @@ def navigationFigure(data):
                 # where the curve leaves - on the page, not in data values
                 atTop = (edge == high) != inverted
                 ax.annotate(
-                    "%s, %s:\noff the axis" % (grade[2], mode),
+                    "%s,\n%s" % (grade[2], mode),
                     xy=(t[kOut], edge), xytext=(14, -22 if atTop else 22),
-                    textcoords="offset points", fontsize=7, color=gradeColour,
+                    textcoords="offset points", fontsize=insideSize,
+                    color=gradeColour,
                     va="center", arrowprops=dict(arrowstyle="->",
                                                  color=gradeColour))
 
@@ -421,25 +453,26 @@ def navigationFigure(data):
 
         ax.set_xlim(0, t[-1])
         ax.set_ylim(low, high)
+        ax.xaxis.set_major_locator(MultipleLocator(100))
+        ax.yaxis.set_major_locator(MultipleLocator(panel["ystep"]))
         if inverted:
             ax.invert_yaxis()
         ax.set_xlabel("time (s)")
         ax.set_ylabel(panel["ylabel"])
-        ax.set_title(panel["title"], fontsize=9)
+        ax.set_title(panel["title"])
         ax.grid(alpha=0.3)
 
     handles = [
         Line2D([], [], color=colour["true"], linewidth=2.5,
-               label="true dock (never moves)"),
+               label="true dock"),
         Patch(facecolor="0.85",
-              label="capture radius %.1f m (in pitch: the error that "
-                    "reaches it)" % captureRadius),
+              label="capture radius %.1f m" % captureRadius),
         Line2D([], [], color="0.5", linewidth=0.8,
-               label="the vehicle passes the dock, t = %.0f s" % t[kPass]),
-    ] + estimateHandles()
-    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=8,
-               frameon=False, bbox_to_anchor=(0.5, 0.045))
-    titleAndNote(fig)
+               label="AUV passes, t = %.0f s" % t[kPass]),
+    ] + gradeHandles() + modeHandles()
+    fig.legend(handles=handles, loc="lower center", ncol=4,
+               frameon=False, bbox_to_anchor=(0.5, 0.0))
+    figureTitle(fig)
 
     return fig
 
