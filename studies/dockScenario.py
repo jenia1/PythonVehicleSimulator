@@ -289,14 +289,14 @@ def sceneFigure(data):
     axZoom.set_ylim(*zoomY)
     depthAxis(axZoom, 5)
 
-    # Ticks at whole multiples of 5 m from the buoy, rather than wherever the
-    # absolute track position happens to put them
+    # Ticks at whole multiples of 5 m from the source, rather than wherever
+    # the absolute track position happens to put them
     axZoom.xaxis.set_major_locator(
         FixedLocator(xS + np.arange(-10, 11, 10)))
     axZoom.xaxis.set_major_formatter(
         FuncFormatter(lambda v, pos: "%+.0f" % (v - xS)
                       if abs(v - xS) > 0.5 else "0"))
-    axZoom.set_xlabel("x relative to the buoy (m)")
+    axZoom.set_xlabel("x relative to the source (m)")
 
     axZoom.axhline(0, color="grey", linestyle="--", linewidth=1)
 
@@ -335,7 +335,7 @@ def sceneFigure(data):
 
     vehicleZoom, = axZoom.plot([], [], ">", color=colour["vehicle"],
                                markersize=10, alpha=0.75, zorder=4)
-    axZoom.set_title("(b) close-up at the buoy and dock", fontsize=14)
+    axZoom.set_title("(b) close-up at the source and dock", fontsize=14)
 
     handles = [
         Line2D([], [], marker="o", color=colour["buoy"], linestyle="None",

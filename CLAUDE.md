@@ -468,6 +468,13 @@ signs they would partly cancel, so adding is the worst case.
   say is in the proposal's captions and text.
 
 Plotting conventions, worth reusing:
+- **The figures call that node the source, the code calls it the buoy**
+  (Jenia, 2026-10-20: "i called the bouy in the proposel \"Source\""). The
+  proposal's eq (2) names it `p_S`, so every label a reader sees says
+  source: the legend entry, the close-up's title and its x axis. In the
+  simulation it stays the `Buoy` body, so `colour["buoy"]`, `log["buoy"]`
+  and `buoy_eta0` are unchanged — renaming those would touch
+  `Main_Project`, `mainLoop` and the CSV columns for a wording change.
 - Height (`−z`) goes on the vertical axis, with tick labels shown as
   positive depth, so deeper is lower on the page.
 - One colour per thing across every figure: truth black, vehicle purple,
