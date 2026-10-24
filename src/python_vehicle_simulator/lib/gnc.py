@@ -212,14 +212,14 @@ def crossFlowDrag(L,B,T,nu_r):
     rho = 1026               # density of water
     n = 20                   # number of strips
 
-    dx = L/20             
+    dx = L/n
     Cd_2D = Hoerner(B,T)    # 2D drag coefficient based on Hoerner's curve
 
     Yh = 0
     Nh = 0
-    xL = -L/2
+    xL = -L/2 + dx/2
     
-    for i in range(0,n+1):
+    for i in range(0,n):
         v_r = nu_r[1]             # relative sway velocity
         r = nu_r[5]               # yaw rate
         Ucf = abs(v_r + xL * r) * (v_r + xL * r)

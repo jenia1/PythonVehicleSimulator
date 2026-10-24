@@ -258,7 +258,6 @@ class remus100:
         Dnu_c = np.array([nu[5]*v_c, -nu[5]*u_c, 0, 0, 0, 0],float) # derivative
         nu_r = nu - nu_c                               # relative velocity        
         alpha = math.atan2( nu_r[2], nu_r[0] )         # angle of attack 
-        U = math.sqrt(nu[0]**2 + nu[1]**2 + nu[2]**2)  # vehicle speed
         U_r = math.sqrt(nu_r[0]**2 + nu_r[1]**2 + nu_r[2]**2)  # relative speed
 
         # Commands and actual control signals
@@ -281,11 +280,11 @@ class remus100:
             n = np.sign(n) * self.nMax       
         
         # Propeller coeffs. KT and KQ are computed as a function of advance no.
-        # Ja = Va/(n*D_prop) where Va = (1-w)*U = 0.944 * U; Allen et al. (2000)
+        # Ja = Va/(n*D_prop) where Va = (1-w)*U_r = 0.944 * U_r; Allen et al. (2000)
         D_prop = 0.14   # propeller diameter corresponding to 5.5 inches
         t_prop = 0.1    # thrust deduction number
         n_rps = n / 60  # propeller revolution (rps) 
-        Va = 0.944 * U  # advance speed (m/s)
+        Va = 0.944 * U_r  # advance speed (m/s)
 
         # Ja_max = 0.944 * 2.5 / (0.14 * 1525/60) = 0.6632
         Ja_max = 0.6632

@@ -662,6 +662,52 @@ installing first. Note this is a *different* cable model from
 `cableGeometry.py`: that one is the navigation measurement, this one is the
 force.
 
+## Keeping up with upstream
+
+The fork tracks `cybergalactic/PythonVehicleSimulator`. Jenia syncs
+`master` on GitHub, then `origin/master` is merged into
+`Jenia2Dsimulation` (first done 2026-10-24, 15 commits).
+
+**Nothing upstream has yet changed what this thesis simulates**, and that
+is checked rather than assumed: `compare_simdata.py` passed unchanged
+across the merge. The reason is that upstream's physics fixes are in code
+the DSRV never calls.
+
+What came in and what it means here:
+
+| upstream change | where | effect on us |
+|---|---|---|
+| `crossFlowDrag` strip integration fixed (`dx = L/n`, strips at midpoints, `n` strips not `n+1`) | `lib/gnc.py` | none: only `otter`, `remus100` and `torpedo` call it. The DSRV does not |
+| propeller advance speed uses relative speed `U_r`, not `U` | `vehicles/remus100.py` | none, `remus100` is unused here |
+| rudder drag sign (`+ Xdd sin²δ`) | `vehicles/shipClarke83.py` | none |
+| `plot3D` rewritten: an `AUVGeometry` class draws a real hull, with downsampling and start/end markers | `lib/plotTimeSeries.py` | available, unused. It needs `Poly3DCollection` from `mpl_toolkits` |
+| start/end markers and axis labels in `plotVehicleStates` | `lib/plotTimeSeries.py` | **`Main_Project` figure 1 shows them** |
+| `eta` default written as `np.zeros(6)` | `lib/mainLoop.py` | none, same value; our `eta0` argument supersedes it |
+| `simData` reversed before plotting | `main.py` | none, that is upstream's demo entry point, not `Main_Project` |
+| two new tests, `test_crossflow_drag.py` and `test_propeller_advance_speed.py` | `tests/` | they need pytest, which is still not installed |
+
+Three files conflicted, all of them ones we had rewritten:
+
+- **`mainLoop.py`** — ours kept whole. Upstream changed the scaffolding our
+  `initBody` + `SimLog` rewrite had already replaced. Their *reason* was
+  worth keeping, so it is now a comment where `eta0` is defaulted: a surface
+  craft started at a nonzero depth is destabilized by the hydrostatic
+  restoring force at t = 0.
+- **`plotTimeSeries.py`** — both sides kept. Their line closes their new
+  `plot3D`; ours is everything we added after it (`plot2D`,
+  `plotNavigation`). Our fix for the stray `plt.grid()` before the first
+  subplot survived the merge, which was worth checking, since upstream
+  edited that very block.
+- **`main.py`** — our three `SimLog` lines, then their flip, so the file
+  stays as close to upstream as the new return type allows.
+
+**An upstream bug to decide about:** in `plotVehicleStates`, the
+North-East panel plots `plt.plot(y, x)` — East horizontal, North vertical,
+the usual convention — but the new labels read `xlabel('North')`,
+`ylabel('East')`, which is the wrong way round. It is upstream's, not ours,
+and `Main_Project` draws that panel. Swapping the two strings fixes it;
+left alone for now so the fork does not diverge without Jenia saying so.
+
 ## Known issues
 
 - **`simulate()` only works with the DSRV.** `stepBody()` unpacks three
@@ -680,8 +726,13 @@ force.
   but cannot steer or change speed.
 - `tests/test_simulate.py` exercises the tanker, otter and others, so it
   cannot pass until the above is fixed. Its calls were updated to the SimLog
-  API but have not been run — `pytest` is not installed in `.venv`.
-  `tests/test_levelling.py` sidesteps that by also running as a plain
+  API but have not been run — `pytest` is not installed in `.venv`. That
+  includes `test_otter_heading_autopilot_remains_finite`, which arrived in
+  the upstream merge still unpacking the old `(simTime, simData)` tuple and
+  was adapted to `simulate(...).simData("vehicle")` like the rest of the
+  file. The two new upstream test files, `test_crossflow_drag.py` and
+  `test_propeller_advance_speed.py`, are pure-pytest and untouched.
+  `tests/test_levelling.py` sidesteps all of this by also running as a plain
   script; new checks should do the same until pytest is installed.
 - `imu_mode="simple"` with **no parameters supplied** is still identical to
   `"ideal"` — the defaults are zero/identity, which is what keeps the

@@ -7,6 +7,7 @@ The pytest for 'test_simulate.py' can be run in the termonal using:
 """  
 
 import matplotlib.pyplot as plt
+import numpy as np
 from python_vehicle_simulator.lib import *
 import python_vehicle_simulator.vehicles as vehicles
 import pytest
@@ -53,6 +54,15 @@ def test_otter():
     vehicle = vehicles.otter()
     simulate(N, sampleTime, vehicle)
 
+
+def test_otter_heading_autopilot_remains_finite():
+    vehicle = vehicles.otter('headingAutopilot', 100.0, 0.3, -30.0, 200.0)
+    simData = simulate(100, sampleTime, vehicle).simData("vehicle")
+
+    assert np.all(simData[0, :6] == 0.0)
+    assert np.isfinite(simData).all()
+
+
 def test_ROVzefakkel():
     vehicle = vehicles.ROVzefakkel()
     simulate(N, sampleTime, vehicle)
@@ -64,6 +74,22 @@ def test_semisub():
 def test_shipClarke83():
     vehicle = vehicles.shipClarke83()
     simulate(N, sampleTime, vehicle)
+
+
+def test_shipClarke83_rudder_increases_surge_resistance():
+    vehicle = vehicles.shipClarke83()
+    eta = np.zeros(6)
+    nu = np.array([3.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    nu_straight, _ = vehicle.dynamics(
+        eta, nu, np.array([0.0]), np.array([0.0]), sampleTime
+    )
+    delta = np.deg2rad(30.0)
+    nu_turning, _ = vehicle.dynamics(
+        eta, nu, np.array([delta]), np.array([delta]), sampleTime
+    )
+
+    assert nu_turning[0] < nu_straight[0]
 
 def test_supply():
     vehicle = vehicles.supply()

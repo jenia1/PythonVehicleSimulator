@@ -167,6 +167,10 @@ def simulate(N, sampleTime, vehicle, eta0=None, imu_mode="ideal",
         dock  - dynamic body at the cable end, with its own IMU and navigation
     """
 
+    # A zero eta0 is the safe default: upstream found that starting a surface
+    # craft at a nonzero depth destabilizes it, since the hydrostatic restoring
+    # force is large at t = 0 (their commit "Fix unstable surface vehicle
+    # initialization"). Submerged vehicles may be given any starting depth.
     if eta0 is None:
         eta0 = [0, 0, 0, 0, 0, 0]
 

@@ -1,10 +1,10 @@
 # Python Vehicle Simulator
 
-The Python Vehicle Simulator supplements the Matlab MSS (Marine Systems Simulator) toolbox. It includes models for autonomous underwater vehicles (AUVs), unmanned surface vehicles (USVs), and ships. The vehicle models are based on the MSS vessel models in /MSS/VESSELS/catalog. Each vehicle is modeled as an object in Python, and the vehicle class has methods for guidance, navigation, and control. The main program ```main.py``` defines vehicle objects for real-time simulation. 
+The Python Vehicle Simulator supplements the MATLAB MSS (Marine Systems Simulator) Toolbox. It includes models for autonomous underwater vehicles (AUVs), unmanned surface vehicles (USVs), and ships. The vehicle models are based on the MSS vessel models in /MSS/VESSELS/catalog. Each vehicle is modeled as an object in Python, and the vehicle class has methods for guidance, navigation, and control. The main program ```main.py``` defines vehicle objects for real-time simulation. 
 
     Root folder:
     /src/python_vehicle_simulator/ 
-        main.py                 - MAIN PROGRAM (terminal command >>python3 main.py)
+        main.py                 - MAIN PROGRAM (terminal command >> python3 main.py)
         3D_animation.gif        - 3D animation file that can be opened in a web browser by right-clicking the file   
         
     Library files:
@@ -20,7 +20,7 @@ The Python Vehicle Simulator supplements the Matlab MSS (Marine Systems Simulato
         DSRV.py                 - Deep submergence rescue vehicle (DSRV) controlled by a stern plane, L = 5.0 m
         frigate.py              - Frigate, rudder-controlled ship described by a nonlinear Nomoto model, L = 100.0 m
         otter.py                - Otter unmanned surface vehicle (USV) controlled by two propellers, L = 2.0 m
-        ROVzefakkel.py          - ROV Zefakkel, rudder-controlled ship described by a nonlinear Nomoto model, L = 54.0 m
+        ROVzefakkel.py          - Zeefakkel, rudder-controlled ship described by a nonlinear Nomoto model, L = 54.0 m
         semisub.py              - Semisubmersible controlled by tunnel thrusters and main propellers, L = 84.5 m
         shipClarke83.py         - Ship, linear maneuvering model specified by L, B and T using the Clarke (1983) formulas
         supply.py               - Offshore supply vessel controlled by tunnel thrusters and main propellers, L = 76.2 m
@@ -50,13 +50,13 @@ where ```<path>``` is the location of the downloaded or cloned PythonVehicleSimu
 
 1. Go to [https://github.com/cybergalactic/PythonVehicleSimulator](https://github.com/cybergalactic/PythonVehicleSimulator)
 2. Click the green Code button and choose Download ZIP
-3. Extract the ZIP file (you’ll get a folder like PythonVehicleSimulator-main, which you can rename it if desired).
+3. Extract the ZIP file (you’ll get a folder like PythonVehicleSimulator-main, which you can rename if desired).
 3. Open a terminal and run:
 ```python3 -m pip install -e /MY_PATH/PythonVehicleSimulator-main`` 
 Replace /MY_PATH/ with the actual path on your system.
 
 **Note:** 
-The -e option installs the simulator in editable mode, which allows you to modify the source files and immediately see changes. If you omit -e, you can still run the program, but changes to the code won’t take effect until you reinstall the package.
+The -e option installs the simulator in editable mode, allowing you to modify the source files and see changes immediately. If you omit -e, you can still run the program, but changes to the code won’t take effect until you reinstall the package.
 
 To run tests:
 
